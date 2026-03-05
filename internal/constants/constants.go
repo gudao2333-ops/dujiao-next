@@ -324,9 +324,9 @@ const (
 
 // 下游回调状态常量
 const (
-	CallbackStatusPending = "callback_pending"
-	CallbackStatusSent    = "callback_sent"
-	CallbackStatusFailed  = "callback_failed"
+	CallbackStatusPending = "pending"
+	CallbackStatusSent    = "sent"
+	CallbackStatusFailed  = "failed"
 )
 
 // 对账类型常量

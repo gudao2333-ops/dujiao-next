@@ -23,6 +23,12 @@ const (
 	TaskAffiliateConfirmCommissions = constants.TaskAffiliateConfirmCommissions
 	// TaskUpstreamSyncStock 上游库存同步任务
 	TaskUpstreamSyncStock = constants.TaskUpstreamSyncStock
+	// TaskProcurementSubmit 采购提交任务
+	TaskProcurementSubmit = constants.TaskProcurementSubmit
+	// TaskProcurementPollStatus 采购状态轮询任务
+	TaskProcurementPollStatus = constants.TaskProcurementPollStatus
+	// TaskDownstreamCallback 下游回调通知任务
+	TaskDownstreamCallback = constants.TaskDownstreamCallback
 )
 
 // OrderStatusEmailPayload 订单状态邮件任务载荷
@@ -109,4 +115,46 @@ func NewAffiliateConfirmCommissionsTask() *asynq.Task {
 // NewUpstreamSyncStockTask 创建上游库存同步任务
 func NewUpstreamSyncStockTask() *asynq.Task {
 	return asynq.NewTask(TaskUpstreamSyncStock, nil)
+}
+
+// ProcurementSubmitPayload 采购提交任务载荷
+type ProcurementSubmitPayload struct {
+	ProcurementOrderID uint `json:"procurement_order_id"`
+}
+
+// NewProcurementSubmitTask 创建采购提交任务
+func NewProcurementSubmitTask(payload ProcurementSubmitPayload) (*asynq.Task, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskProcurementSubmit, body), nil
+}
+
+// ProcurementPollStatusPayload 采购状态轮询任务载荷
+type ProcurementPollStatusPayload struct {
+	ProcurementOrderID uint `json:"procurement_order_id"`
+}
+
+// NewProcurementPollStatusTask 创建采购状态轮询任务
+func NewProcurementPollStatusTask(payload ProcurementPollStatusPayload) (*asynq.Task, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskProcurementPollStatus, body), nil
+}
+
+// DownstreamCallbackPayload 下游回调通知任务载荷
+type DownstreamCallbackPayload struct {
+	DownstreamOrderRefID uint `json:"downstream_order_ref_id"`
+}
+
+// NewDownstreamCallbackTask 创建下游回调通知任务
+func NewDownstreamCallbackTask(payload DownstreamCallbackPayload) (*asynq.Task, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskDownstreamCallback, body), nil
 }

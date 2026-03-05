@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -508,6 +509,8 @@ func (s *PaymentService) enqueueOrderPaidAsync(order *models.Order, payment *mod
 				}
 			}
 		}
+		// 上游采购：为包含上游交付类型的订单创建采购单
+		s.enqueueProcurementAsync(order, log)
 		return
 	}
 	if order.Status == constants.OrderStatusFulfilling {
@@ -524,6 +527,34 @@ func (s *PaymentService) enqueueOrderPaidAsync(order *models.Order, payment *mod
 			)
 		}
 	}
+	// 上游采购：为包含上游交付类型的订单创建采购单
+	s.enqueueProcurementAsync(order, log)
+	// B 侧：订单支付成功后检查是否需要回调下游
+	s.enqueueDownstreamCallbackAsync(order, log)
+}
+
+// enqueueProcurementAsync 如果订单包含上游交付类型商品，创建采购单
+func (s *PaymentService) enqueueProcurementAsync(order *models.Order, log *zap.SugaredLogger) {
+	if s.procurementSvc == nil || order == nil {
+		return
+	}
+	if err := s.procurementSvc.CreateForOrder(order.ID); err != nil {
+		if !errors.Is(err, ErrProcurementExists) {
+			log.Warnw("payment_enqueue_procurement_failed",
+				"order_id", order.ID,
+				"order_no", order.OrderNo,
+				"error", err,
+			)
+		}
+	}
+}
+
+// enqueueDownstreamCallbackAsync B 侧：通知下游 A 站点订单已支付
+func (s *PaymentService) enqueueDownstreamCallbackAsync(order *models.Order, log *zap.SugaredLogger) {
+	if s.downstreamCallbackSvc == nil || order == nil {
+		return
+	}
+	s.downstreamCallbackSvc.EnqueueCallback(order.ID)
 }
 
 func (s *PaymentService) enqueueOrderPaidNotificationAsync(order *models.Order, payment *models.Payment, log *zap.SugaredLogger) {

@@ -20,18 +20,30 @@ import (
 
 // PaymentService 支付服务
 type PaymentService struct {
-	orderRepo       repository.OrderRepository
-	productRepo     repository.ProductRepository
-	productSKURepo  repository.ProductSKURepository
-	paymentRepo     repository.PaymentRepository
-	channelRepo     repository.PaymentChannelRepository
-	walletRepo      repository.WalletRepository
-	queueClient     *queue.Client
-	walletSvc       *WalletService
-	settingService  *SettingService
-	expireMinutes   int
-	affiliateSvc    *AffiliateService
-	notificationSvc *NotificationService
+	orderRepo             repository.OrderRepository
+	productRepo           repository.ProductRepository
+	productSKURepo        repository.ProductSKURepository
+	paymentRepo           repository.PaymentRepository
+	channelRepo           repository.PaymentChannelRepository
+	walletRepo            repository.WalletRepository
+	queueClient           *queue.Client
+	walletSvc             *WalletService
+	settingService        *SettingService
+	expireMinutes         int
+	affiliateSvc          *AffiliateService
+	notificationSvc       *NotificationService
+	procurementSvc        *ProcurementOrderService
+	downstreamCallbackSvc *DownstreamCallbackService
+}
+
+// SetProcurementService 设置采购单服务（解决循环依赖）
+func (s *PaymentService) SetProcurementService(svc *ProcurementOrderService) {
+	s.procurementSvc = svc
+}
+
+// SetDownstreamCallbackService 设置下游回调服务（解决循环依赖）
+func (s *PaymentService) SetDownstreamCallbackService(svc *DownstreamCallbackService) {
+	s.downstreamCallbackSvc = svc
 }
 
 // PaymentServiceOptions 支付服务构造参数

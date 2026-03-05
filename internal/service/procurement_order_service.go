@@ -1,0 +1,698 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dujiao-next/internal/constants"
+	"github.com/dujiao-next/internal/logger"
+	"github.com/dujiao-next/internal/models"
+	"github.com/dujiao-next/internal/queue"
+	"github.com/dujiao-next/internal/repository"
+	"github.com/dujiao-next/internal/upstream"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+var (
+	ErrProcurementNotFound      = errors.New("procurement order not found")
+	ErrProcurementExists        = errors.New("procurement order already exists")
+	ErrProcurementStatusInvalid = errors.New("procurement order status invalid")
+)
+
+// ProcurementOrderService 采购单服务
+type ProcurementOrderService struct {
+	procRepo    repository.ProcurementOrderRepository
+	orderRepo   repository.OrderRepository
+	mappingRepo repository.ProductMappingRepository
+	skuMapRepo  repository.SKUMappingRepository
+	connSvc     *SiteConnectionService
+	queueClient *queue.Client
+	fulfillSvc  *FulfillmentService
+}
+
+// NewProcurementOrderService 创建采购单服务
+func NewProcurementOrderService(
+	procRepo repository.ProcurementOrderRepository,
+	orderRepo repository.OrderRepository,
+	mappingRepo repository.ProductMappingRepository,
+	skuMapRepo repository.SKUMappingRepository,
+	connSvc *SiteConnectionService,
+	queueClient *queue.Client,
+	fulfillSvc *FulfillmentService,
+) *ProcurementOrderService {
+	return &ProcurementOrderService{
+		procRepo:    procRepo,
+		orderRepo:   orderRepo,
+		mappingRepo: mappingRepo,
+		skuMapRepo:  skuMapRepo,
+		connSvc:     connSvc,
+		queueClient: queueClient,
+		fulfillSvc:  fulfillSvc,
+	}
+}
+
+// CreateForOrder 为已支付订单创建采购单（上游交付类型）
+func (s *ProcurementOrderService) CreateForOrder(orderID uint) error {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return fmt.Errorf("load order: %w", err)
+	}
+	if order == nil {
+		return ErrOrderNotFound
+	}
+
+	// 父订单有子订单：遍历子订单
+	if order.ParentID == nil && len(order.Children) > 0 {
+		for i := range order.Children {
+			child := &order.Children[i]
+			if !s.hasUpstreamItems(child) {
+				continue
+			}
+			if err := s.createProcurementForSingleOrder(child); err != nil {
+				logger.Warnw("procurement_create_child_failed",
+					"parent_order_id", orderID,
+					"child_order_id", child.ID,
+					"error", err,
+				)
+				return err
+			}
+		}
+		return nil
+	}
+
+	// 单订单
+	if !s.hasUpstreamItems(order) {
+		return nil
+	}
+	return s.createProcurementForSingleOrder(order)
+}
+
+// createProcurementForSingleOrder 为单个订单创建采购单
+func (s *ProcurementOrderService) createProcurementForSingleOrder(order *models.Order) error {
+	// 检查是否已存在
+	existing, err := s.procRepo.GetByLocalOrderID(order.ID)
+	if err != nil {
+		return fmt.Errorf("check existing procurement: %w", err)
+	}
+	if existing != nil {
+		return ErrProcurementExists
+	}
+
+	if len(order.Items) == 0 {
+		return fmt.Errorf("order %d has no items", order.ID)
+	}
+	item := order.Items[0]
+
+	// 查找商品映射
+	mapping, err := s.mappingRepo.GetByLocalProductID(item.ProductID)
+	if err != nil {
+		return fmt.Errorf("lookup product mapping: %w", err)
+	}
+	if mapping == nil {
+		return fmt.Errorf("no product mapping for product %d", item.ProductID)
+	}
+
+	procOrder := &models.ProcurementOrder{
+		ConnectionID:    mapping.ConnectionID,
+		LocalOrderID:    order.ID,
+		LocalOrderNo:    order.OrderNo,
+		Status:          "pending",
+		LocalSellAmount: order.TotalAmount,
+		Currency:        order.Currency,
+		TraceID:         uuid.NewString(),
+	}
+
+	if err := s.procRepo.Create(procOrder); err != nil {
+		return fmt.Errorf("create procurement order: %w", err)
+	}
+
+	logger.Infow("procurement_order_created",
+		"procurement_order_id", procOrder.ID,
+		"local_order_id", order.ID,
+		"connection_id", mapping.ConnectionID,
+	)
+
+	// 入队提交任务
+	if s.queueClient != nil {
+		if err := s.queueClient.EnqueueProcurementSubmit(queue.ProcurementSubmitPayload{
+			ProcurementOrderID: procOrder.ID,
+		}); err != nil {
+			logger.Warnw("procurement_enqueue_submit_failed",
+				"procurement_order_id", procOrder.ID,
+				"error", err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// SubmitToUpstream Worker 调用：向上游站点提交采购单
+func (s *ProcurementOrderService) SubmitToUpstream(procurementOrderID uint) error {
+	procOrder, err := s.procRepo.GetByID(procurementOrderID)
+	if err != nil {
+		return fmt.Errorf("load procurement order: %w", err)
+	}
+	if procOrder == nil {
+		return ErrProcurementNotFound
+	}
+
+	// 校验状态
+	if procOrder.Status != "pending" && procOrder.Status != "failed" {
+		return ErrProcurementStatusInvalid
+	}
+
+	// 获取连接和适配器
+	conn, err := s.connSvc.GetByID(procOrder.ConnectionID)
+	if err != nil {
+		return fmt.Errorf("load connection: %w", err)
+	}
+	if conn == nil {
+		return ErrConnectionNotFound
+	}
+
+	adapter, err := s.connSvc.GetAdapter(conn)
+	if err != nil {
+		return fmt.Errorf("get adapter: %w", err)
+	}
+
+	// 加载本地订单获取 SKU 信息
+	localOrder, err := s.orderRepo.GetByID(procOrder.LocalOrderID)
+	if err != nil {
+		return fmt.Errorf("load local order: %w", err)
+	}
+	if localOrder == nil {
+		return ErrOrderNotFound
+	}
+	if len(localOrder.Items) == 0 {
+		return fmt.Errorf("local order %d has no items", localOrder.ID)
+	}
+	item := localOrder.Items[0]
+
+	// 查找 SKU 映射
+	skuMapping, err := s.skuMapRepo.GetByLocalSKUID(item.SKUID)
+	if err != nil {
+		return fmt.Errorf("lookup sku mapping: %w", err)
+	}
+	if skuMapping == nil {
+		return fmt.Errorf("no sku mapping for local sku %d", item.SKUID)
+	}
+
+	// 构建上游请求
+	req := upstream.CreateUpstreamOrderReq{
+		SKUID:             skuMapping.UpstreamSKUID,
+		Quantity:          item.Quantity,
+		DownstreamOrderNo: localOrder.OrderNo,
+		TraceID:           procOrder.TraceID,
+		CallbackURL:       conn.CallbackURL,
+	}
+
+	// 传递人工表单数据（如有）
+	if len(item.ManualFormSubmissionJSON) > 0 {
+		req.ManualFormData = item.ManualFormSubmissionJSON
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := adapter.CreateOrder(ctx, req)
+	if err != nil {
+		return s.handleSubmitFailure(procOrder, conn, fmt.Sprintf("upstream request error: %v", err), true)
+	}
+
+	if !resp.OK {
+		retryable := isRetryableErrorCode(resp.ErrorCode)
+		errMsg := resp.ErrorMessage
+		if errMsg == "" {
+			errMsg = resp.ErrorCode
+		}
+		return s.handleSubmitFailure(procOrder, conn, errMsg, retryable)
+	}
+
+	// 成功：更新状态
+	now := time.Now()
+	updates := map[string]interface{}{
+		"upstream_order_id": resp.OrderID,
+		"upstream_order_no": resp.OrderNo,
+		"upstream_amount":   resp.Amount,
+		"error_message":     "",
+		"updated_at":        now,
+	}
+	if err := s.procRepo.UpdateStatus(procOrder.ID, "accepted", updates); err != nil {
+		return fmt.Errorf("update procurement status: %w", err)
+	}
+
+	logger.Infow("procurement_order_accepted",
+		"procurement_order_id", procOrder.ID,
+		"upstream_order_id", resp.OrderID,
+		"upstream_order_no", resp.OrderNo,
+	)
+
+	// 更新本地订单状态为 fulfilling
+	_ = s.orderRepo.UpdateStatus(localOrder.ID, constants.OrderStatusFulfilling, map[string]interface{}{
+		"updated_at": now,
+	})
+
+	// 入队轮询任务（30s 延迟，作为回调的 fallback）
+	if s.queueClient != nil {
+		_ = s.queueClient.EnqueueProcurementPollStatus(queue.ProcurementPollStatusPayload{
+			ProcurementOrderID: procOrder.ID,
+		}, 30*time.Second)
+	}
+
+	return nil
+}
+
+// handleSubmitFailure 处理提交失败
+func (s *ProcurementOrderService) handleSubmitFailure(procOrder *models.ProcurementOrder, conn *models.SiteConnection, errMsg string, retryable bool) error {
+	now := time.Now()
+
+	if retryable && procOrder.RetryCount < conn.RetryMax {
+		intervals := parseRetryIntervals(conn.RetryIntervals)
+		idx := procOrder.RetryCount
+		if idx >= len(intervals) {
+			idx = len(intervals) - 1
+		}
+		delay := intervals[idx]
+		nextRetry := now.Add(delay)
+
+		updates := map[string]interface{}{
+			"retry_count":   procOrder.RetryCount + 1,
+			"next_retry_at": &nextRetry,
+			"error_message": errMsg,
+			"updated_at":    now,
+		}
+		if err := s.procRepo.UpdateStatus(procOrder.ID, "failed", updates); err != nil {
+			return fmt.Errorf("update procurement status (failed): %w", err)
+		}
+
+		logger.Warnw("procurement_submit_failed_retryable",
+			"procurement_order_id", procOrder.ID,
+			"retry_count", procOrder.RetryCount+1,
+			"next_retry_at", nextRetry,
+			"error", errMsg,
+		)
+
+		// 入队重试
+		if s.queueClient != nil {
+			_ = s.queueClient.EnqueueProcurementSubmit(queue.ProcurementSubmitPayload{
+				ProcurementOrderID: procOrder.ID,
+			})
+		}
+
+		return nil
+	}
+
+	// 不可重试或已达上限：拒绝
+	updates := map[string]interface{}{
+		"error_message": errMsg,
+		"updated_at":    now,
+	}
+	if err := s.procRepo.UpdateStatus(procOrder.ID, "rejected", updates); err != nil {
+		return fmt.Errorf("update procurement status (rejected): %w", err)
+	}
+
+	logger.Warnw("procurement_submit_rejected",
+		"procurement_order_id", procOrder.ID,
+		"error", errMsg,
+	)
+	return fmt.Errorf("procurement rejected: %s", errMsg)
+}
+
+// HandleUpstreamCallback 处理上游回调通知
+func (s *ProcurementOrderService) HandleUpstreamCallback(procurementOrderID uint, upstreamStatus string, fulfillment *upstream.UpstreamFulfillment) error {
+	procOrder, err := s.procRepo.GetByID(procurementOrderID)
+	if err != nil {
+		return fmt.Errorf("load procurement order: %w", err)
+	}
+	if procOrder == nil {
+		return ErrProcurementNotFound
+	}
+
+	now := time.Now()
+
+	switch upstreamStatus {
+	case "delivered":
+		// 更新采购单状态
+		updates := map[string]interface{}{
+			"updated_at": now,
+		}
+		if fulfillment != nil {
+			updates["upstream_payload"] = fulfillment.Payload
+		}
+		if err := s.procRepo.UpdateStatus(procOrder.ID, "fulfilled", updates); err != nil {
+			return fmt.Errorf("update procurement status: %w", err)
+		}
+
+		// 在本地订单上创建交付记录
+		if fulfillment != nil {
+			if err := s.createUpstreamFulfillment(procOrder.LocalOrderID, fulfillment, now); err != nil {
+				logger.Warnw("procurement_create_fulfillment_failed",
+					"procurement_order_id", procOrder.ID,
+					"local_order_id", procOrder.LocalOrderID,
+					"error", err,
+				)
+				return err
+			}
+		}
+
+		// 更新本地订单状态
+		_ = s.orderRepo.UpdateStatus(procOrder.LocalOrderID, constants.OrderStatusDelivered, map[string]interface{}{
+			"updated_at": now,
+		})
+
+		// 如果有父订单，同步父订单状态
+		localOrder, _ := s.orderRepo.GetByID(procOrder.LocalOrderID)
+		if localOrder != nil && localOrder.ParentID != nil {
+			if status, syncErr := syncParentStatus(s.orderRepo, *localOrder.ParentID, now); syncErr != nil {
+				logger.Warnw("procurement_sync_parent_status_failed",
+					"procurement_order_id", procOrder.ID,
+					"parent_order_id", *localOrder.ParentID,
+					"error", syncErr,
+				)
+			} else if s.queueClient != nil {
+				if status == "" {
+					status = constants.OrderStatusDelivered
+				}
+				_, _ = enqueueOrderStatusEmailTaskIfEligible(s.orderRepo, s.queueClient, *localOrder.ParentID, status)
+			}
+		} else if localOrder != nil && s.queueClient != nil {
+			_, _ = enqueueOrderStatusEmailTaskIfEligible(s.orderRepo, s.queueClient, localOrder.ID, constants.OrderStatusDelivered)
+		}
+
+		logger.Infow("procurement_order_fulfilled",
+			"procurement_order_id", procOrder.ID,
+			"local_order_id", procOrder.LocalOrderID,
+		)
+
+	case "canceled":
+		updates := map[string]interface{}{
+			"updated_at": now,
+		}
+		if err := s.procRepo.UpdateStatus(procOrder.ID, "canceled", updates); err != nil {
+			return fmt.Errorf("update procurement status: %w", err)
+		}
+
+		logger.Infow("procurement_order_canceled_by_upstream",
+			"procurement_order_id", procOrder.ID,
+			"local_order_id", procOrder.LocalOrderID,
+		)
+
+	default:
+		logger.Warnw("procurement_unknown_upstream_status",
+			"procurement_order_id", procOrder.ID,
+			"upstream_status", upstreamStatus,
+		)
+	}
+
+	return nil
+}
+
+// createUpstreamFulfillment 在本地订单上创建上游交付记录
+func (s *ProcurementOrderService) createUpstreamFulfillment(orderID uint, uf *upstream.UpstreamFulfillment, now time.Time) error {
+	deliveredAt := uf.DeliveredAt
+	if deliveredAt == nil {
+		deliveredAt = &now
+	}
+
+	return s.orderRepo.Transaction(func(tx *gorm.DB) error {
+		// 检查是否已有交付记录
+		var existing models.Fulfillment
+		if err := tx.Where("order_id = ?", orderID).First(&existing).Error; err == nil {
+			return nil // 已存在，跳过
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		fulfillment := &models.Fulfillment{
+			OrderID:       orderID,
+			Type:          constants.FulfillmentTypeUpstream,
+			Status:        constants.FulfillmentStatusDelivered,
+			Payload:       uf.Payload,
+			LogisticsJSON: uf.DeliveryData,
+			DeliveredAt:   deliveredAt,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		return tx.Create(fulfillment).Error
+	})
+}
+
+// PollUpstreamStatus Worker 调用：轮询上游订单状态
+func (s *ProcurementOrderService) PollUpstreamStatus(procurementOrderID uint) error {
+	procOrder, err := s.procRepo.GetByID(procurementOrderID)
+	if err != nil {
+		return fmt.Errorf("load procurement order: %w", err)
+	}
+	if procOrder == nil {
+		return ErrProcurementNotFound
+	}
+
+	// 只轮询 accepted 状态的订单
+	if procOrder.Status != "accepted" {
+		return nil
+	}
+
+	conn, err := s.connSvc.GetByID(procOrder.ConnectionID)
+	if err != nil {
+		return fmt.Errorf("load connection: %w", err)
+	}
+	if conn == nil {
+		return ErrConnectionNotFound
+	}
+
+	adapter, err := s.connSvc.GetAdapter(conn)
+	if err != nil {
+		return fmt.Errorf("get adapter: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	detail, err := adapter.GetOrder(ctx, procOrder.UpstreamOrderID)
+	if err != nil {
+		logger.Warnw("procurement_poll_status_error",
+			"procurement_order_id", procOrder.ID,
+			"upstream_order_id", procOrder.UpstreamOrderID,
+			"error", err,
+		)
+		// 轮询失败，重新入队
+		return s.requeuePoll(procOrder, conn)
+	}
+
+	switch detail.Status {
+	case "delivered", "completed":
+		return s.HandleUpstreamCallback(procOrder.ID, "delivered", detail.Fulfillment)
+	case "canceled":
+		return s.HandleUpstreamCallback(procOrder.ID, "canceled", nil)
+	default:
+		// 状态未变，继续轮询
+		return s.requeuePoll(procOrder, conn)
+	}
+}
+
+// requeuePoll 重新入队轮询任务
+func (s *ProcurementOrderService) requeuePoll(procOrder *models.ProcurementOrder, conn *models.SiteConnection) error {
+	if s.queueClient == nil {
+		return nil
+	}
+
+	intervals := parseRetryIntervals(conn.RetryIntervals)
+	idx := procOrder.RetryCount
+	if idx >= len(intervals) {
+		// 已超过最大轮询次数
+		logger.Warnw("procurement_poll_max_retries",
+			"procurement_order_id", procOrder.ID,
+			"retry_count", procOrder.RetryCount,
+		)
+		now := time.Now()
+		_ = s.procRepo.UpdateStatus(procOrder.ID, "failed", map[string]interface{}{
+			"error_message": "poll status max retries exceeded",
+			"updated_at":    now,
+		})
+		return nil
+	}
+
+	delay := intervals[idx]
+
+	// 递增轮询计数
+	now := time.Now()
+	_ = s.procRepo.UpdateStatus(procOrder.ID, procOrder.Status, map[string]interface{}{
+		"retry_count": procOrder.RetryCount + 1,
+		"updated_at":  now,
+	})
+
+	return s.queueClient.EnqueueProcurementPollStatus(queue.ProcurementPollStatusPayload{
+		ProcurementOrderID: procOrder.ID,
+	}, delay)
+}
+
+// GetByID 根据 ID 获取采购单
+func (s *ProcurementOrderService) GetByID(id uint) (*models.ProcurementOrder, error) {
+	procOrder, err := s.procRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if procOrder == nil {
+		return nil, ErrProcurementNotFound
+	}
+	return procOrder, nil
+}
+
+// GetByLocalOrderNo 根据本地订单号获取采购单
+func (s *ProcurementOrderService) GetByLocalOrderNo(localOrderNo string) (*models.ProcurementOrder, error) {
+	return s.procRepo.GetByLocalOrderNo(localOrderNo)
+}
+
+// List 列表查询采购单
+func (s *ProcurementOrderService) List(filter repository.ProcurementOrderListFilter) ([]models.ProcurementOrder, int64, error) {
+	return s.procRepo.List(filter)
+}
+
+// RetryManual 手动重试失败的采购单
+func (s *ProcurementOrderService) RetryManual(id uint) error {
+	procOrder, err := s.procRepo.GetByID(id)
+	if err != nil {
+		return fmt.Errorf("load procurement order: %w", err)
+	}
+	if procOrder == nil {
+		return ErrProcurementNotFound
+	}
+
+	if procOrder.Status != "failed" && procOrder.Status != "rejected" {
+		return ErrProcurementStatusInvalid
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"retry_count":   0,
+		"next_retry_at": nil,
+		"error_message": "",
+		"updated_at":    now,
+	}
+	if err := s.procRepo.UpdateStatus(procOrder.ID, "pending", updates); err != nil {
+		return fmt.Errorf("reset procurement status: %w", err)
+	}
+
+	logger.Infow("procurement_manual_retry",
+		"procurement_order_id", procOrder.ID,
+	)
+
+	if s.queueClient != nil {
+		return s.queueClient.EnqueueProcurementSubmit(queue.ProcurementSubmitPayload{
+			ProcurementOrderID: procOrder.ID,
+		})
+	}
+	return nil
+}
+
+// CancelManual 手动取消采购单
+func (s *ProcurementOrderService) CancelManual(id uint) error {
+	procOrder, err := s.procRepo.GetByID(id)
+	if err != nil {
+		return fmt.Errorf("load procurement order: %w", err)
+	}
+	if procOrder == nil {
+		return ErrProcurementNotFound
+	}
+
+	// 已交付的不能取消
+	if procOrder.Status == "fulfilled" || procOrder.Status == "canceled" {
+		return ErrProcurementStatusInvalid
+	}
+
+	// 已被上游接受：尝试取消上游订单
+	if procOrder.Status == "accepted" && procOrder.UpstreamOrderID > 0 {
+		conn, err := s.connSvc.GetByID(procOrder.ConnectionID)
+		if err == nil && conn != nil {
+			adapter, adErr := s.connSvc.GetAdapter(conn)
+			if adErr == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if cancelErr := adapter.CancelOrder(ctx, procOrder.UpstreamOrderID); cancelErr != nil {
+					logger.Warnw("procurement_cancel_upstream_failed",
+						"procurement_order_id", procOrder.ID,
+						"upstream_order_id", procOrder.UpstreamOrderID,
+						"error", cancelErr,
+					)
+				}
+			}
+		}
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"error_message": "manually canceled",
+		"updated_at":    now,
+	}
+	if err := s.procRepo.UpdateStatus(procOrder.ID, "canceled", updates); err != nil {
+		return fmt.Errorf("update procurement status: %w", err)
+	}
+
+	logger.Infow("procurement_manual_cancel",
+		"procurement_order_id", procOrder.ID,
+	)
+	return nil
+}
+
+// hasUpstreamItems 检查订单是否包含上游交付类型的商品
+func (s *ProcurementOrderService) hasUpstreamItems(order *models.Order) bool {
+	for _, item := range order.Items {
+		if strings.TrimSpace(item.FulfillmentType) == constants.FulfillmentTypeUpstream {
+			return true
+		}
+	}
+	return false
+}
+
+// isRetryableErrorCode 判断上游错误码是否可重试
+func isRetryableErrorCode(code string) bool {
+	nonRetryable := map[string]bool{
+		"insufficient_balance": true,
+		"product_unavailable":  true,
+		"sku_unavailable":      true,
+		"invalid_request":      true,
+		"unauthorized":         true,
+		"forbidden":            true,
+		"duplicate_order":      true,
+		"product_out_of_stock": true,
+	}
+	return !nonRetryable[strings.ToLower(strings.TrimSpace(code))]
+}
+
+// parseRetryIntervals 解析重试间隔配置（JSON 数组格式如 "[30,60,300]"）
+func parseRetryIntervals(raw string) []time.Duration {
+	raw = strings.TrimSpace(raw)
+	// 移除方括号
+	raw = strings.TrimPrefix(raw, "[")
+	raw = strings.TrimSuffix(raw, "]")
+
+	if raw == "" {
+		return []time.Duration{30 * time.Second, 60 * time.Second, 300 * time.Second}
+	}
+
+	parts := strings.Split(raw, ",")
+	intervals := make([]time.Duration, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		seconds, err := strconv.Atoi(part)
+		if err != nil || seconds <= 0 {
+			continue
+		}
+		intervals = append(intervals, time.Duration(seconds)*time.Second)
+	}
+
+	if len(intervals) == 0 {
+		return []time.Duration{30 * time.Second, 60 * time.Second, 300 * time.Second}
+	}
+	return intervals
+}

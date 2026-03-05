@@ -18,10 +18,16 @@ import (
 
 // FulfillmentService 交付服务
 type FulfillmentService struct {
-	orderRepo       repository.OrderRepository
-	fulfillmentRepo repository.FulfillmentRepository
-	secretRepo      repository.CardSecretRepository
-	queueClient     *queue.Client
+	orderRepo             repository.OrderRepository
+	fulfillmentRepo       repository.FulfillmentRepository
+	secretRepo            repository.CardSecretRepository
+	queueClient           *queue.Client
+	downstreamCallbackSvc *DownstreamCallbackService
+}
+
+// SetDownstreamCallbackService 设置下游回调服务（解决循环依赖）
+func (s *FulfillmentService) SetDownstreamCallbackService(svc *DownstreamCallbackService) {
+	s.downstreamCallbackSvc = svc
 }
 
 // NewFulfillmentService 创建交付服务
@@ -153,6 +159,10 @@ func (s *FulfillmentService) CreateManual(input CreateManualInput) (*models.Fulf
 				)
 			}
 		}
+	}
+	// B 侧：人工交付完成后触发下游回调
+	if s.downstreamCallbackSvc != nil {
+		s.downstreamCallbackSvc.EnqueueCallback(input.OrderID)
 	}
 	return created, nil
 }
@@ -327,6 +337,10 @@ func (s *FulfillmentService) CreateAuto(orderID uint) (*models.Fulfillment, erro
 				)
 			}
 		}
+	}
+	// B 侧：自动交付完成后触发下游回调
+	if s.downstreamCallbackSvc != nil {
+		s.downstreamCallbackSvc.EnqueueCallback(orderID)
 	}
 	return fulfillment, nil
 }

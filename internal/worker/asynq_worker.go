@@ -42,6 +42,9 @@ func (c *Consumer) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(queue.TaskNotificationDispatch, c.handleNotificationDispatch)
 	mux.HandleFunc(queue.TaskAffiliateConfirmCommissions, c.handleAffiliateConfirmCommissions)
 	mux.HandleFunc(queue.TaskUpstreamSyncStock, c.handleUpstreamSyncStock)
+	mux.HandleFunc(queue.TaskProcurementSubmit, c.handleProcurementSubmit)
+	mux.HandleFunc(queue.TaskProcurementPollStatus, c.handleProcurementPollStatus)
+	mux.HandleFunc(queue.TaskDownstreamCallback, c.handleDownstreamCallback)
 }
 
 func (c *Consumer) handleOrderStatusEmail(_ context.Context, task *asynq.Task) error {
@@ -282,6 +285,75 @@ func (c *Consumer) handleUpstreamSyncStock(_ context.Context, _ *asynq.Task) err
 	}
 	if err := c.ProductMappingService.SyncAllStock(); err != nil {
 		logger.Warnw("worker_upstream_sync_stock_failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Consumer) handleProcurementSubmit(_ context.Context, task *asynq.Task) error {
+	if c == nil || task == nil || c.ProcurementOrderService == nil {
+		logger.Debugw("worker_procurement_submit_skip_nil")
+		return nil
+	}
+	var payload queue.ProcurementSubmitPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logger.Warnw("worker_procurement_submit_unmarshal_failed", "error", err)
+		return err
+	}
+	if payload.ProcurementOrderID == 0 {
+		return nil
+	}
+	if err := c.ProcurementOrderService.SubmitToUpstream(payload.ProcurementOrderID); err != nil {
+		logger.Warnw("worker_procurement_submit_failed",
+			"procurement_order_id", payload.ProcurementOrderID,
+			"error", err,
+		)
+		return err
+	}
+	return nil
+}
+
+func (c *Consumer) handleProcurementPollStatus(_ context.Context, task *asynq.Task) error {
+	if c == nil || task == nil || c.ProcurementOrderService == nil {
+		logger.Debugw("worker_procurement_poll_skip_nil")
+		return nil
+	}
+	var payload queue.ProcurementPollStatusPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logger.Warnw("worker_procurement_poll_unmarshal_failed", "error", err)
+		return err
+	}
+	if payload.ProcurementOrderID == 0 {
+		return nil
+	}
+	if err := c.ProcurementOrderService.PollUpstreamStatus(payload.ProcurementOrderID); err != nil {
+		logger.Warnw("worker_procurement_poll_failed",
+			"procurement_order_id", payload.ProcurementOrderID,
+			"error", err,
+		)
+		return err
+	}
+	return nil
+}
+
+func (c *Consumer) handleDownstreamCallback(_ context.Context, task *asynq.Task) error {
+	if c == nil || task == nil || c.DownstreamCallbackService == nil {
+		logger.Debugw("worker_downstream_callback_skip_nil")
+		return nil
+	}
+	var payload queue.DownstreamCallbackPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logger.Warnw("worker_downstream_callback_unmarshal_failed", "error", err)
+		return err
+	}
+	if payload.DownstreamOrderRefID == 0 {
+		return nil
+	}
+	if err := c.DownstreamCallbackService.SendCallback(payload.DownstreamOrderRefID); err != nil {
+		logger.Warnw("worker_downstream_callback_failed",
+			"ref_id", payload.DownstreamOrderRefID,
+			"error", err,
+		)
 		return err
 	}
 	return nil

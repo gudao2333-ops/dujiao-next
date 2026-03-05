@@ -17,67 +17,71 @@ type Container struct {
 	QueueClient *queue.Client
 
 	// Repositories
-	AdminRepo             repository.AdminRepository
-	UserRepo              repository.UserRepository
-	UserOAuthIdentityRepo repository.UserOAuthIdentityRepository
-	EmailVerifyCodeRepo   repository.EmailVerifyCodeRepository
-	OrderRepo             repository.OrderRepository
-	PaymentRepo           repository.PaymentRepository
-	PaymentChannelRepo    repository.PaymentChannelRepository
-	CardSecretRepo        repository.CardSecretRepository
-	CardSecretBatchRepo   repository.CardSecretBatchRepository
-	GiftCardRepo          repository.GiftCardRepository
-	FulfillmentRepo       repository.FulfillmentRepository
-	ProductRepo           repository.ProductRepository
-	ProductSKURepo        repository.ProductSKURepository
-	CartRepo              repository.CartRepository
-	CouponRepo            repository.CouponRepository
-	CouponUsageRepo       repository.CouponUsageRepository
-	PromotionRepo         repository.PromotionRepository
-	WalletRepo            repository.WalletRepository
-	PostRepo              repository.PostRepository
-	CategoryRepo          repository.CategoryRepository
-	BannerRepo            repository.BannerRepository
-	SettingRepo           repository.SettingRepository
-	UserLoginLogRepo      repository.UserLoginLogRepository
-	AuthzAuditLogRepo     repository.AuthzAuditLogRepository
-	DashboardRepo         repository.DashboardRepository
-	AffiliateRepo         repository.AffiliateRepository
-	ApiCredentialRepo     repository.ApiCredentialRepository
-	SiteConnectionRepo    repository.SiteConnectionRepository
-	ProductMappingRepo    repository.ProductMappingRepository
-	SKUMappingRepo        repository.SKUMappingRepository
+	AdminRepo              repository.AdminRepository
+	UserRepo               repository.UserRepository
+	UserOAuthIdentityRepo  repository.UserOAuthIdentityRepository
+	EmailVerifyCodeRepo    repository.EmailVerifyCodeRepository
+	OrderRepo              repository.OrderRepository
+	PaymentRepo            repository.PaymentRepository
+	PaymentChannelRepo     repository.PaymentChannelRepository
+	CardSecretRepo         repository.CardSecretRepository
+	CardSecretBatchRepo    repository.CardSecretBatchRepository
+	GiftCardRepo           repository.GiftCardRepository
+	FulfillmentRepo        repository.FulfillmentRepository
+	ProductRepo            repository.ProductRepository
+	ProductSKURepo         repository.ProductSKURepository
+	CartRepo               repository.CartRepository
+	CouponRepo             repository.CouponRepository
+	CouponUsageRepo        repository.CouponUsageRepository
+	PromotionRepo          repository.PromotionRepository
+	WalletRepo             repository.WalletRepository
+	PostRepo               repository.PostRepository
+	CategoryRepo           repository.CategoryRepository
+	BannerRepo             repository.BannerRepository
+	SettingRepo            repository.SettingRepository
+	UserLoginLogRepo       repository.UserLoginLogRepository
+	AuthzAuditLogRepo      repository.AuthzAuditLogRepository
+	DashboardRepo          repository.DashboardRepository
+	AffiliateRepo          repository.AffiliateRepository
+	ApiCredentialRepo      repository.ApiCredentialRepository
+	SiteConnectionRepo     repository.SiteConnectionRepository
+	ProductMappingRepo     repository.ProductMappingRepository
+	SKUMappingRepo         repository.SKUMappingRepository
+	ProcurementOrderRepo   repository.ProcurementOrderRepository
+	DownstreamOrderRefRepo repository.DownstreamOrderRefRepository
 
 	// Services
-	AuthzService          *authz.Service
-	AuthService           *service.AuthService
-	UserAuthService       *service.UserAuthService
-	TelegramAuthService   *service.TelegramAuthService
-	EmailService          *service.EmailService
-	CaptchaService        *service.CaptchaService
-	UploadService         *service.UploadService
-	ProductService        *service.ProductService
-	PostService           *service.PostService
-	CategoryService       *service.CategoryService
-	SettingService        *service.SettingService
-	CartService           *service.CartService
-	WalletService         *service.WalletService
-	OrderService          *service.OrderService
-	FulfillmentService    *service.FulfillmentService
-	CouponAdminService    *service.CouponAdminService
-	PromotionAdminService *service.PromotionAdminService
-	BannerService         *service.BannerService
-	PaymentService        *service.PaymentService
-	CardSecretService     *service.CardSecretService
-	GiftCardService       *service.GiftCardService
-	UserLoginLogService   *service.UserLoginLogService
-	AuthzAuditService     *service.AuthzAuditService
-	DashboardService      *service.DashboardService
-	NotificationService   *service.NotificationService
-	AffiliateService      *service.AffiliateService
-	ApiCredentialService  *service.ApiCredentialService
-	SiteConnectionService *service.SiteConnectionService
-	ProductMappingService *service.ProductMappingService
+	AuthzService              *authz.Service
+	AuthService               *service.AuthService
+	UserAuthService           *service.UserAuthService
+	TelegramAuthService       *service.TelegramAuthService
+	EmailService              *service.EmailService
+	CaptchaService            *service.CaptchaService
+	UploadService             *service.UploadService
+	ProductService            *service.ProductService
+	PostService               *service.PostService
+	CategoryService           *service.CategoryService
+	SettingService            *service.SettingService
+	CartService               *service.CartService
+	WalletService             *service.WalletService
+	OrderService              *service.OrderService
+	FulfillmentService        *service.FulfillmentService
+	CouponAdminService        *service.CouponAdminService
+	PromotionAdminService     *service.PromotionAdminService
+	BannerService             *service.BannerService
+	PaymentService            *service.PaymentService
+	CardSecretService         *service.CardSecretService
+	GiftCardService           *service.GiftCardService
+	UserLoginLogService       *service.UserLoginLogService
+	AuthzAuditService         *service.AuthzAuditService
+	DashboardService          *service.DashboardService
+	NotificationService       *service.NotificationService
+	AffiliateService          *service.AffiliateService
+	ApiCredentialService      *service.ApiCredentialService
+	SiteConnectionService     *service.SiteConnectionService
+	ProductMappingService     *service.ProductMappingService
+	ProcurementOrderService   *service.ProcurementOrderService
+	DownstreamCallbackService *service.DownstreamCallbackService
 }
 
 // NewContainer 初始化容器
@@ -144,6 +148,8 @@ func (c *Container) initRepositories() {
 	c.SiteConnectionRepo = repository.NewSiteConnectionRepository(db)
 	c.ProductMappingRepo = repository.NewProductMappingRepository(db)
 	c.SKUMappingRepo = repository.NewSKUMappingRepository(db)
+	c.ProcurementOrderRepo = repository.NewProcurementOrderRepository(db)
+	c.DownstreamOrderRefRepo = repository.NewDownstreamOrderRefRepository(db)
 }
 
 func (c *Container) initServices() {
@@ -219,6 +225,7 @@ func (c *Container) initServices() {
 	c.ApiCredentialService = service.NewApiCredentialService(c.ApiCredentialRepo)
 	c.SiteConnectionService = service.NewSiteConnectionService(c.SiteConnectionRepo, c.Config.App.SecretKey, "uploads")
 	c.ProductMappingService = service.NewProductMappingService(c.ProductMappingRepo, c.SKUMappingRepo, c.ProductRepo, c.ProductSKURepo, c.SiteConnectionService)
+	c.DownstreamCallbackService = service.NewDownstreamCallbackService(c.DownstreamOrderRefRepo, c.OrderRepo, c.ApiCredentialRepo, c.QueueClient)
 	c.PaymentService = service.NewPaymentService(service.PaymentServiceOptions{
 		OrderRepo:           c.OrderRepo,
 		ProductRepo:         c.ProductRepo,
@@ -233,4 +240,11 @@ func (c *Container) initServices() {
 		AffiliateService:    c.AffiliateService,
 		NotificationService: c.NotificationService,
 	})
+	c.ProcurementOrderService = service.NewProcurementOrderService(
+		c.ProcurementOrderRepo, c.OrderRepo, c.ProductMappingRepo, c.SKUMappingRepo,
+		c.SiteConnectionService, c.QueueClient, c.FulfillmentService,
+	)
+	c.PaymentService.SetProcurementService(c.ProcurementOrderService)
+	c.PaymentService.SetDownstreamCallbackService(c.DownstreamCallbackService)
+	c.FulfillmentService.SetDownstreamCallbackService(c.DownstreamCallbackService)
 }

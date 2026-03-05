@@ -12,6 +12,7 @@ import (
 	"github.com/dujiao-next/internal/constants"
 	adminhandlers "github.com/dujiao-next/internal/http/handlers/admin"
 	publichandlers "github.com/dujiao-next/internal/http/handlers/public"
+	upstreamhandlers "github.com/dujiao-next/internal/http/handlers/upstream"
 	"github.com/dujiao-next/internal/http/response"
 	"github.com/dujiao-next/internal/logger"
 	"github.com/dujiao-next/internal/provider"
@@ -30,6 +31,7 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 	// 初始化 Handler（按前台/后台分组）
 	publicHandler := publichandlers.New(c)
 	adminHandler := adminhandlers.New(c)
+	upstreamHandler := upstreamhandlers.New(c, c.DownstreamOrderRefRepo)
 	redisPrefix := strings.TrimSpace(cfg.Redis.Prefix)
 	if redisPrefix == "" {
 		redisPrefix = constants.RedisPrefixDefault
@@ -147,17 +149,16 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 		upstreamAPI := apiV1.Group("/upstream")
 		upstreamAPI.Use(UpstreamAPIAuthMiddleware(c.ApiCredentialRepo))
 		{
-			upstreamAPI.POST("/ping", func(ctx *gin.Context) {
-				// Phase 3 实现
-				UpstreamSuccessResponse(ctx, gin.H{"ok": true, "protocol_version": "1.0"})
-			})
+			upstreamAPI.POST("/ping", upstreamHandler.Ping)
+			upstreamAPI.GET("/products", upstreamHandler.ListProducts)
+			upstreamAPI.GET("/products/:id", upstreamHandler.GetProduct)
+			upstreamAPI.POST("/orders", upstreamHandler.CreateOrder)
+			upstreamAPI.GET("/orders/:id", upstreamHandler.GetOrder)
+			upstreamAPI.POST("/orders/:id/cancel", upstreamHandler.CancelOrder)
 		}
 
 		// 上游回调接收（本站作为 A 站点，接收 B 的回调）
-		apiV1.POST("/upstream/callback", func(ctx *gin.Context) {
-			// Phase 3 实现
-			UpstreamCallbackResponse(ctx, true, "received")
-		})
+		apiV1.POST("/upstream/callback", upstreamHandler.HandleCallback)
 
 		apiV1.POST("/payments/callback", publicHandler.PaymentCallback)
 		apiV1.GET("/payments/callback", publicHandler.PaymentCallback)
@@ -332,6 +333,12 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 				authorized.PUT("/product-mappings/:id/status", adminHandler.UpdateProductMappingStatus)
 				authorized.DELETE("/product-mappings/:id", adminHandler.DeleteProductMapping)
 				authorized.GET("/upstream-products", adminHandler.ListUpstreamProducts)
+
+				// 采购单管理
+				authorized.GET("/procurement-orders", adminHandler.GetProcurementOrders)
+				authorized.GET("/procurement-orders/:id", adminHandler.GetProcurementOrder)
+				authorized.POST("/procurement-orders/:id/retry", adminHandler.RetryProcurementOrder)
+				authorized.POST("/procurement-orders/:id/cancel", adminHandler.CancelProcurementOrder)
 			}
 		}
 	}

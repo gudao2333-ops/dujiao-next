@@ -126,6 +126,51 @@ func (c *Client) EnqueueNotificationDispatch(payload NotificationDispatchPayload
 	return err
 }
 
+// EnqueueProcurementSubmit 推送采购提交任务
+func (c *Client) EnqueueProcurementSubmit(payload ProcurementSubmitPayload, opts ...asynq.Option) error {
+	if !c.Enabled() {
+		return nil
+	}
+	task, err := NewProcurementSubmitTask(payload)
+	if err != nil {
+		return err
+	}
+	options := append([]asynq.Option{asynq.Queue(c.defaultQueue)}, opts...)
+	_, err = c.client.Enqueue(task, options...)
+	return err
+}
+
+// EnqueueProcurementPollStatus 推送采购状态轮询任务
+func (c *Client) EnqueueProcurementPollStatus(payload ProcurementPollStatusPayload, delay time.Duration) error {
+	if !c.Enabled() {
+		return nil
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	task, err := NewProcurementPollStatusTask(payload)
+	if err != nil {
+		return err
+	}
+	options := []asynq.Option{asynq.Queue(c.defaultQueue), asynq.ProcessIn(delay)}
+	_, err = c.client.Enqueue(task, options...)
+	return err
+}
+
+// EnqueueDownstreamCallback 推送下游回调通知任务
+func (c *Client) EnqueueDownstreamCallback(payload DownstreamCallbackPayload, opts ...asynq.Option) error {
+	if !c.Enabled() {
+		return nil
+	}
+	task, err := NewDownstreamCallbackTask(payload)
+	if err != nil {
+		return err
+	}
+	options := append([]asynq.Option{asynq.Queue(c.defaultQueue)}, opts...)
+	_, err = c.client.Enqueue(task, options...)
+	return err
+}
+
 // BuildServerConfig 生成队列服务配置
 func BuildServerConfig(cfg *config.QueueConfig) (asynq.RedisClientOpt, asynq.Config) {
 	opt := buildRedisOpt(cfg)

@@ -1,0 +1,180 @@
+package repository
+
+import (
+	"errors"
+	"time"
+
+	"github.com/dujiao-next/internal/models"
+
+	"gorm.io/gorm"
+)
+
+// ProcurementOrderRepository 采购单数据访问接口
+type ProcurementOrderRepository interface {
+	GetByID(id uint) (*models.ProcurementOrder, error)
+	GetByLocalOrderID(localOrderID uint) (*models.ProcurementOrder, error)
+	GetByLocalOrderNo(localOrderNo string) (*models.ProcurementOrder, error)
+	GetByUpstreamOrderID(connectionID, upstreamOrderID uint) (*models.ProcurementOrder, error)
+	Create(order *models.ProcurementOrder) error
+	Update(order *models.ProcurementOrder) error
+	UpdateStatus(id uint, status string, updates map[string]interface{}) error
+	List(filter ProcurementOrderListFilter) ([]models.ProcurementOrder, int64, error)
+	ListRetriable(now time.Time, limit int) ([]models.ProcurementOrder, error)
+	ListByLocalOrderIDs(localOrderIDs []uint) ([]models.ProcurementOrder, error)
+	Transaction(fn func(tx *gorm.DB) error) error
+	WithTx(tx *gorm.DB) *GormProcurementOrderRepository
+}
+
+// ProcurementOrderListFilter 采购单列表筛选
+type ProcurementOrderListFilter struct {
+	ConnectionID uint
+	Status       string
+	LocalOrderNo string
+	Pagination
+}
+
+// GormProcurementOrderRepository GORM 实现
+type GormProcurementOrderRepository struct {
+	db *gorm.DB
+}
+
+// NewProcurementOrderRepository 创建采购单仓库
+func NewProcurementOrderRepository(db *gorm.DB) *GormProcurementOrderRepository {
+	return &GormProcurementOrderRepository{db: db}
+}
+
+// WithTx 绑定事务
+func (r *GormProcurementOrderRepository) WithTx(tx *gorm.DB) *GormProcurementOrderRepository {
+	if tx == nil {
+		return r
+	}
+	return &GormProcurementOrderRepository{db: tx}
+}
+
+// Transaction 执行事务
+func (r *GormProcurementOrderRepository) Transaction(fn func(tx *gorm.DB) error) error {
+	return r.db.Transaction(fn)
+}
+
+// GetByID 根据 ID 获取
+func (r *GormProcurementOrderRepository) GetByID(id uint) (*models.ProcurementOrder, error) {
+	var order models.ProcurementOrder
+	if err := r.db.Preload("Connection").Preload("LocalOrder").First(&order, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// GetByLocalOrderID 根据本地订单 ID 获取
+func (r *GormProcurementOrderRepository) GetByLocalOrderID(localOrderID uint) (*models.ProcurementOrder, error) {
+	var order models.ProcurementOrder
+	if err := r.db.Where("local_order_id = ?", localOrderID).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// GetByLocalOrderNo 根据本地订单号获取
+func (r *GormProcurementOrderRepository) GetByLocalOrderNo(localOrderNo string) (*models.ProcurementOrder, error) {
+	var order models.ProcurementOrder
+	if err := r.db.Where("local_order_no = ?", localOrderNo).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// GetByUpstreamOrderID 根据连接+上游订单 ID 获取
+func (r *GormProcurementOrderRepository) GetByUpstreamOrderID(connectionID, upstreamOrderID uint) (*models.ProcurementOrder, error) {
+	var order models.ProcurementOrder
+	if err := r.db.Where("connection_id = ? AND upstream_order_id = ?", connectionID, upstreamOrderID).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// Create 创建采购单
+func (r *GormProcurementOrderRepository) Create(order *models.ProcurementOrder) error {
+	return r.db.Create(order).Error
+}
+
+// Update 更新采购单
+func (r *GormProcurementOrderRepository) Update(order *models.ProcurementOrder) error {
+	return r.db.Save(order).Error
+}
+
+// UpdateStatus 更新采购单状态
+func (r *GormProcurementOrderRepository) UpdateStatus(id uint, status string, updates map[string]interface{}) error {
+	if updates == nil {
+		updates = map[string]interface{}{}
+	}
+	updates["status"] = status
+	return r.db.Model(&models.ProcurementOrder{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// List 列表查询
+func (r *GormProcurementOrderRepository) List(filter ProcurementOrderListFilter) ([]models.ProcurementOrder, int64, error) {
+	var orders []models.ProcurementOrder
+	var total int64
+
+	q := r.db.Model(&models.ProcurementOrder{})
+	if filter.ConnectionID > 0 {
+		q = q.Where("connection_id = ?", filter.ConnectionID)
+	}
+	if filter.Status != "" {
+		q = q.Where("status = ?", filter.Status)
+	}
+	if filter.LocalOrderNo != "" {
+		q = q.Where("local_order_no = ?", filter.LocalOrderNo)
+	}
+
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	q = q.Order("created_at DESC").Preload("Connection").Preload("LocalOrder")
+	if filter.Page > 0 && filter.PageSize > 0 {
+		q = q.Offset((filter.Page - 1) * filter.PageSize).Limit(filter.PageSize)
+	}
+
+	if err := q.Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+// ListRetriable 获取需要重试的采购单
+func (r *GormProcurementOrderRepository) ListRetriable(now time.Time, limit int) ([]models.ProcurementOrder, error) {
+	var orders []models.ProcurementOrder
+	q := r.db.Where("status IN (?, ?) AND next_retry_at IS NOT NULL AND next_retry_at <= ?",
+		"pending", "failed", now).
+		Order("next_retry_at ASC").
+		Limit(limit)
+	if err := q.Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// ListByLocalOrderIDs 根据本地订单 ID 批量查询
+func (r *GormProcurementOrderRepository) ListByLocalOrderIDs(localOrderIDs []uint) ([]models.ProcurementOrder, error) {
+	if len(localOrderIDs) == 0 {
+		return nil, nil
+	}
+	var orders []models.ProcurementOrder
+	if err := r.db.Where("local_order_id IN ?", localOrderIDs).Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
