@@ -14,6 +14,7 @@ type ChannelClient struct {
 	ChannelKey    string         `json:"channel_key" gorm:"size:64;uniqueIndex;not null"`
 	ChannelSecret string         `json:"-" gorm:"size:512;not null"`             // AES-256-GCM encrypted
 	BotToken      string         `json:"-" gorm:"size:512"`                      // AES-256-GCM encrypted, Telegram Bot Token
+	CallbackURL   string         `json:"callback_url" gorm:"size:500"`           // 回调通知地址（如 http://localhost:8444/internal/order-fulfilled）
 	Status        int            `json:"status" gorm:"default:1;not null;index"` // 1=active, 0=disabled
 	Description   string         `json:"description" gorm:"size:500"`
 	LastUsedAt    *time.Time     `json:"last_used_at"`

@@ -23,6 +23,7 @@ type FulfillmentService struct {
 	secretRepo            repository.CardSecretRepository
 	queueClient           *queue.Client
 	downstreamCallbackSvc *DownstreamCallbackService
+	userOAuthIdentityRepo repository.UserOAuthIdentityRepository
 }
 
 // SetDownstreamCallbackService 设置下游回调服务（解决循环依赖）
@@ -31,12 +32,19 @@ func (s *FulfillmentService) SetDownstreamCallbackService(svc *DownstreamCallbac
 }
 
 // NewFulfillmentService 创建交付服务
-func NewFulfillmentService(orderRepo repository.OrderRepository, fulfillmentRepo repository.FulfillmentRepository, secretRepo repository.CardSecretRepository, queueClient *queue.Client) *FulfillmentService {
+func NewFulfillmentService(
+	orderRepo repository.OrderRepository,
+	fulfillmentRepo repository.FulfillmentRepository,
+	secretRepo repository.CardSecretRepository,
+	queueClient *queue.Client,
+	userOAuthIdentityRepo repository.UserOAuthIdentityRepository,
+) *FulfillmentService {
 	return &FulfillmentService{
-		orderRepo:       orderRepo,
-		fulfillmentRepo: fulfillmentRepo,
-		secretRepo:      secretRepo,
-		queueClient:     queueClient,
+		orderRepo:             orderRepo,
+		fulfillmentRepo:       fulfillmentRepo,
+		secretRepo:            secretRepo,
+		queueClient:           queueClient,
+		userOAuthIdentityRepo: userOAuthIdentityRepo,
 	}
 }
 
@@ -160,6 +168,12 @@ func (s *FulfillmentService) CreateManual(input CreateManualInput) (*models.Fulf
 			}
 		}
 	}
+	// Telegram 通知：交付完成后推送给用户
+	notifyOrderID := input.OrderID
+	if order.ParentID != nil {
+		notifyOrderID = *order.ParentID
+	}
+	go s.NotifyBotOrderFulfilled(order.UserID, notifyOrderID)
 	// B 侧：人工交付完成后触发下游回调
 	if s.downstreamCallbackSvc != nil {
 		s.downstreamCallbackSvc.EnqueueCallback(input.OrderID)
@@ -338,11 +352,42 @@ func (s *FulfillmentService) CreateAuto(orderID uint) (*models.Fulfillment, erro
 			}
 		}
 	}
+	// Telegram 通知：交付完成后推送给用户
+	notifyOrderID := orderID
+	if order.ParentID != nil {
+		notifyOrderID = *order.ParentID
+	}
+	go s.NotifyBotOrderFulfilled(order.UserID, notifyOrderID)
 	// B 侧：自动交付完成后触发下游回调
 	if s.downstreamCallbackSvc != nil {
 		s.downstreamCallbackSvc.EnqueueCallback(orderID)
 	}
 	return fulfillment, nil
+}
+
+// NotifyBotOrderFulfilled 查找用户 Telegram 绑定并入队 asynq 任务通知 Bot
+func (s *FulfillmentService) NotifyBotOrderFulfilled(userID, orderID uint) {
+	if s.queueClient == nil || userID == 0 || s.userOAuthIdentityRepo == nil {
+		return
+	}
+
+	identity, err := s.userOAuthIdentityRepo.GetByUserProvider(userID, "telegram")
+	if err != nil {
+		logger.Warnw("fulfillment_notify_bot_fetch_identity_failed",
+			"order_id", orderID, "user_id", userID, "error", err)
+		return
+	}
+	if identity == nil || strings.TrimSpace(identity.ProviderUserID) == "" {
+		return
+	}
+
+	if err := s.queueClient.EnqueueBotNotify(queue.BotNotifyPayload{
+		OrderID:        orderID,
+		TelegramUserID: strings.TrimSpace(identity.ProviderUserID),
+	}); err != nil {
+		logger.Warnw("fulfillment_notify_bot_enqueue_failed",
+			"order_id", orderID, "user_id", userID, "error", err)
+	}
 }
 
 func normalizeManualDeliveryData(raw models.JSON) models.JSON {

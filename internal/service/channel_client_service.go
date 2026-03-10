@@ -36,12 +36,13 @@ type ChannelClientResponse struct {
 	ChannelSecret string `json:"channel_secret"`
 	BotToken      string `json:"bot_token"`
 	BotTokenSet   bool   `json:"bot_token_set"`
+	CallbackURL   string `json:"callback_url"`
 	Description   string `json:"description"`
 	Status        int    `json:"status"`
 }
 
 // CreateChannelClient 创建渠道客户端
-func (s *ChannelClientService) CreateChannelClient(name, channelType, description, botToken string) (*ChannelClientResponse, error) {
+func (s *ChannelClientService) CreateChannelClient(name, channelType, description, botToken, callbackURL string) (*ChannelClientResponse, error) {
 	// 生成随机 key (32 bytes = 64 hex chars)
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -67,6 +68,7 @@ func (s *ChannelClientService) CreateChannelClient(name, channelType, descriptio
 		ChannelType:   channelType,
 		ChannelKey:    channelKey,
 		ChannelSecret: encryptedSecret,
+		CallbackURL:   callbackURL,
 		Status:        1,
 		Description:   description,
 	}
@@ -92,6 +94,7 @@ func (s *ChannelClientService) CreateChannelClient(name, channelType, descriptio
 		ChannelSecret: plainSecret,
 		BotToken:      maskBotToken(botToken),
 		BotTokenSet:   botToken != "",
+		CallbackURL:   client.CallbackURL,
 		Description:   client.Description,
 		Status:        client.Status,
 	}, nil
@@ -136,6 +139,7 @@ func (s *ChannelClientService) GetChannelClientDetail(id uint) (*ChannelClientRe
 		ChannelKey:    client.ChannelKey,
 		ChannelSecret: plainSecret,
 		BotTokenSet:   client.BotToken != "",
+		CallbackURL:   client.CallbackURL,
 		Description:   client.Description,
 		Status:        client.Status,
 	}
@@ -169,6 +173,7 @@ func (s *ChannelClientService) ListChannelClientDetails() ([]ChannelClientRespon
 			ChannelKey:    c.ChannelKey,
 			ChannelSecret: plainSecret,
 			BotTokenSet:   c.BotToken != "",
+			CallbackURL:   c.CallbackURL,
 			Description:   c.Description,
 			Status:        c.Status,
 		}
@@ -216,6 +221,7 @@ func (s *ChannelClientService) ResetChannelClientSecret(id uint) (*ChannelClient
 		ChannelKey:    client.ChannelKey,
 		ChannelSecret: plainSecret,
 		BotTokenSet:   client.BotToken != "",
+		CallbackURL:   client.CallbackURL,
 		Description:   client.Description,
 		Status:        client.Status,
 	}
@@ -254,7 +260,7 @@ func (s *ChannelClientService) UpdateChannelClientStatus(id uint, status int) er
 }
 
 // UpdateChannelClient 更新渠道客户端信息（名称、描述、bot_token）
-func (s *ChannelClientService) UpdateChannelClient(id uint, name, description string, botToken *string) (*ChannelClientResponse, error) {
+func (s *ChannelClientService) UpdateChannelClient(id uint, name, description string, botToken *string, callbackURL *string) (*ChannelClientResponse, error) {
 	client, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -267,6 +273,9 @@ func (s *ChannelClientService) UpdateChannelClient(id uint, name, description st
 		client.Name = name
 	}
 	client.Description = description
+	if callbackURL != nil {
+		client.CallbackURL = *callbackURL
+	}
 
 	// botToken 为 nil 表示不修改；非 nil 则更新（空字符串表示清空）
 	if botToken != nil {
@@ -297,6 +306,7 @@ func (s *ChannelClientService) UpdateChannelClient(id uint, name, description st
 		ChannelKey:    client.ChannelKey,
 		ChannelSecret: plainSecret,
 		BotTokenSet:   client.BotToken != "",
+		CallbackURL:   client.CallbackURL,
 		Description:   client.Description,
 		Status:        client.Status,
 	}
@@ -315,6 +325,14 @@ func (s *ChannelClientService) DecryptBotToken(client *models.ChannelClient) (st
 		return "", nil
 	}
 	return crypto.Decrypt(s.encKey, client.BotToken)
+}
+
+// DecryptChannelSecret 解密渠道客户端的 ChannelSecret
+func (s *ChannelClientService) DecryptChannelSecret(client *models.ChannelClient) (string, error) {
+	if client.ChannelSecret == "" {
+		return "", nil
+	}
+	return crypto.Decrypt(s.encKey, client.ChannelSecret)
 }
 
 // VerifyChannelSignature 验证渠道签名

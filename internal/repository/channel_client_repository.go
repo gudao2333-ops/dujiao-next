@@ -13,6 +13,7 @@ type ChannelClientRepository interface {
 	Create(client *models.ChannelClient) error
 	FindByID(id uint) (*models.ChannelClient, error)
 	FindByChannelKey(key string) (*models.ChannelClient, error)
+	FindActiveByChannelType(channelType string) (*models.ChannelClient, error)
 	FindAll() ([]models.ChannelClient, error)
 	Update(client *models.ChannelClient) error
 	Delete(client *models.ChannelClient) error
@@ -49,6 +50,18 @@ func (r *GormChannelClientRepository) FindByID(id uint) (*models.ChannelClient, 
 func (r *GormChannelClientRepository) FindByChannelKey(key string) (*models.ChannelClient, error) {
 	var client models.ChannelClient
 	if err := r.db.Where("channel_key = ?", key).First(&client).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &client, nil
+}
+
+// FindActiveByChannelType 根据 channel_type 查找活跃的渠道客户端（取第一个）
+func (r *GormChannelClientRepository) FindActiveByChannelType(channelType string) (*models.ChannelClient, error) {
+	var client models.ChannelClient
+	if err := r.db.Where("channel_type = ? AND status = 1", channelType).First(&client).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}

@@ -189,6 +189,19 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 			channelAPI.GET("/catalog/categories", channelHandler.GetCategories)
 			channelAPI.GET("/catalog/products", channelHandler.GetProducts)
 			channelAPI.GET("/catalog/products/:id", channelHandler.GetProductDetail)
+
+			// Order / Payment 端点（购买流程）
+			channelAPI.POST("/orders", channelHandler.CreateOrder)
+			channelAPI.GET("/orders", channelHandler.ListOrders)
+			channelAPI.GET("/orders/:id", channelHandler.GetOrderStatus)
+			channelAPI.POST("/orders/:id/cancel", channelHandler.CancelOrder)
+			channelAPI.GET("/payment-channels", channelHandler.GetPaymentChannels)
+			channelAPI.POST("/payments", channelHandler.CreatePayment)
+
+			// Wallet 端点（钱包）
+			channelAPI.GET("/wallet", channelHandler.GetWallet)
+			channelAPI.GET("/wallet/transactions", channelHandler.GetWalletTransactions)
+			channelAPI.POST("/wallet/recharge", channelHandler.CreateWalletRecharge)
 		}
 
 		apiV1.POST("/payments/callback", publicHandler.PaymentCallback)

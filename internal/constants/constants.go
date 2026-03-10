@@ -289,6 +289,7 @@ const (
 	TaskUpstreamSyncStock           = "upstream:sync_stock"
 	TaskReconciliationRun           = "reconciliation:run"
 	TaskDownstreamCallback          = "downstream:callback"
+	TaskBotNotify                   = "bot:notify"
 )
 
 // 采购单状态常量

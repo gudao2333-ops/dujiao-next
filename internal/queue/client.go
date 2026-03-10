@@ -186,6 +186,20 @@ func (c *Client) EnqueueReconciliationRun(payload ReconciliationRunPayload, opts
 	return err
 }
 
+// EnqueueBotNotify 入队 Bot 交付通知任务
+func (c *Client) EnqueueBotNotify(payload BotNotifyPayload, opts ...asynq.Option) error {
+	if !c.Enabled() {
+		return nil
+	}
+	task, err := NewBotNotifyTask(payload)
+	if err != nil {
+		return err
+	}
+	options := append([]asynq.Option{asynq.Queue(c.defaultQueue), asynq.MaxRetry(5)}, opts...)
+	_, err = c.client.Enqueue(task, options...)
+	return err
+}
+
 // BuildServerConfig 生成队列服务配置
 func BuildServerConfig(cfg *config.QueueConfig) (asynq.RedisClientOpt, asynq.Config) {
 	opt := buildRedisOpt(cfg)

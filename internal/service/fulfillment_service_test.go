@@ -103,7 +103,7 @@ func TestCreateAutoFulfillmentRespectsSKUBoundary(t *testing.T) {
 		repository.NewOrderRepository(db),
 		repository.NewFulfillmentRepository(db),
 		repository.NewCardSecretRepository(db),
-		nil,
+		nil, nil,
 	)
 
 	result, err := svc.CreateAuto(order.ID)

@@ -26,6 +26,7 @@ type createChannelClientRequest struct {
 	ChannelType string `json:"channel_type" binding:"required"`
 	Description string `json:"description"`
 	BotToken    string `json:"bot_token"`
+	CallbackURL string `json:"callback_url"`
 }
 
 // CreateChannelClient 创建渠道客户端
@@ -36,7 +37,7 @@ func (h *Handler) CreateChannelClient(c *gin.Context) {
 		return
 	}
 
-	result, err := h.ChannelClientService.CreateChannelClient(req.Name, req.ChannelType, req.Description, req.BotToken)
+	result, err := h.ChannelClientService.CreateChannelClient(req.Name, req.ChannelType, req.Description, req.BotToken, req.CallbackURL)
 	if err != nil {
 		shared.RespondError(c, response.CodeInternal, "error.channel_client_create_failed", err)
 		return
@@ -98,7 +99,8 @@ func (h *Handler) UpdateChannelClientStatus(c *gin.Context) {
 type updateChannelClientRequest struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
-	BotToken    *string `json:"bot_token"` // nil = 不修改, "" = 清空, "xxx" = 设置
+	BotToken    *string `json:"bot_token"`    // nil = 不修改, "" = 清空, "xxx" = 设置
+	CallbackURL *string `json:"callback_url"` // nil = 不修改, "" = 清空
 }
 
 // UpdateChannelClient 更新渠道客户端信息
@@ -115,7 +117,7 @@ func (h *Handler) UpdateChannelClient(c *gin.Context) {
 		return
 	}
 
-	result, err := h.ChannelClientService.UpdateChannelClient(uint(id), req.Name, req.Description, req.BotToken)
+	result, err := h.ChannelClientService.UpdateChannelClient(uint(id), req.Name, req.Description, req.BotToken, req.CallbackURL)
 	if err != nil {
 		if errors.Is(err, service.ErrChannelClientNotFound) {
 			shared.RespondError(c, response.CodeNotFound, "error.not_found", nil)

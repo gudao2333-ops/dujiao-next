@@ -33,6 +33,8 @@ const (
 	TaskDownstreamCallback = constants.TaskDownstreamCallback
 	// TaskReconciliationRun 对账执行任务
 	TaskReconciliationRun = constants.TaskReconciliationRun
+	// TaskBotNotify Bot 交付通知任务
+	TaskBotNotify = constants.TaskBotNotify
 )
 
 // OrderStatusEmailPayload 订单状态邮件任务载荷
@@ -180,4 +182,19 @@ func NewDownstreamCallbackTask(payload DownstreamCallbackPayload) (*asynq.Task, 
 		return nil, err
 	}
 	return asynq.NewTask(TaskDownstreamCallback, body), nil
+}
+
+// BotNotifyPayload Bot 交付通知任务载荷
+type BotNotifyPayload struct {
+	OrderID        uint   `json:"order_id"`
+	TelegramUserID string `json:"telegram_user_id"`
+}
+
+// NewBotNotifyTask 创建 Bot 交付通知任务
+func NewBotNotifyTask(payload BotNotifyPayload) (*asynq.Task, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskBotNotify, body), nil
 }

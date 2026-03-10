@@ -1,10 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/dujiao-next/internal/provider"
 	"github.com/dujiao-next/internal/queue"
 	"github.com/dujiao-next/internal/service"
+	"github.com/dujiao-next/internal/upstream"
 
 	"github.com/hibiken/asynq"
 )
@@ -47,6 +51,7 @@ func (c *Consumer) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(queue.TaskProcurementSyncAccepted, c.handleProcurementSyncAccepted)
 	mux.HandleFunc(queue.TaskDownstreamCallback, c.handleDownstreamCallback)
 	mux.HandleFunc(queue.TaskReconciliationRun, c.handleReconciliationRun)
+	mux.HandleFunc(queue.TaskBotNotify, c.handleBotNotify)
 }
 
 func (c *Consumer) handleOrderStatusEmail(_ context.Context, task *asynq.Task) error {
@@ -426,4 +431,80 @@ func buildOrderFulfillmentEmailPayload(order *models.Order) string {
 		parts = append(parts, fmt.Sprintf("[%s]\n%s", strings.TrimSpace(child.OrderNo), content))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func (c *Consumer) handleBotNotify(_ context.Context, task *asynq.Task) error {
+	if c == nil || task == nil {
+		return nil
+	}
+	var payload queue.BotNotifyPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logger.Warnw("worker_bot_notify_unmarshal_failed", "error", err)
+		return fmt.Errorf("unmarshal bot notify payload: %w", err)
+	}
+	if payload.OrderID == 0 || payload.TelegramUserID == "" {
+		logger.Debugw("worker_bot_notify_skip_invalid", "order_id", payload.OrderID, "telegram_user_id", payload.TelegramUserID)
+		return nil
+	}
+
+	// 从 DB 读取 telegram_bot 类型的活跃 ChannelClient
+	channelClient, err := c.ChannelClientRepo.FindActiveByChannelType("telegram_bot")
+	if err != nil {
+		logger.Warnw("worker_bot_notify_find_channel_client_failed", "error", err)
+		return fmt.Errorf("find telegram bot channel client: %w", err)
+	}
+	if channelClient == nil || channelClient.CallbackURL == "" {
+		logger.Debugw("worker_bot_notify_skip_no_channel_client")
+		return nil
+	}
+
+	// 解密 ChannelSecret
+	plainSecret, err := c.ChannelClientService.DecryptChannelSecret(channelClient)
+	if err != nil {
+		logger.Warnw("worker_bot_notify_decrypt_secret_failed", "error", err)
+		return fmt.Errorf("decrypt channel secret: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"order_id":         payload.OrderID,
+		"telegram_user_id": payload.TelegramUserID,
+	})
+
+	timestamp := time.Now().Unix()
+	path := "/internal/order-fulfilled"
+	signature := upstream.Sign(plainSecret, "POST", path, timestamp, body)
+
+	req, err := http.NewRequest("POST", channelClient.CallbackURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create bot notify request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Channel-Key", channelClient.ChannelKey)
+	req.Header.Set("X-Channel-Timestamp", strconv.FormatInt(timestamp, 10))
+	req.Header.Set("X-Channel-Signature", signature)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logger.Warnw("worker_bot_notify_request_failed",
+			"order_id", payload.OrderID, "telegram_user_id", payload.TelegramUserID, "error", err)
+		return fmt.Errorf("bot notify request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		logger.Debugw("worker_bot_notify_sent",
+			"order_id", payload.OrderID, "telegram_user_id", payload.TelegramUserID)
+		return nil
+	}
+
+	// 4xx 客户端错误不重试
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		logger.Warnw("worker_bot_notify_client_error",
+			"order_id", payload.OrderID, "status", resp.StatusCode)
+		return nil
+	}
+
+	// 5xx 返回 error 触发 asynq 重试
+	return fmt.Errorf("bot notify unexpected status: %d", resp.StatusCode)
 }

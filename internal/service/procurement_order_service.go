@@ -436,6 +436,15 @@ func (s *ProcurementOrderService) HandleUpstreamCallback(procurementOrderID uint
 			}
 		}
 
+		// 通知 Bot 订单已交付
+		if s.fulfillSvc != nil && localOrder != nil {
+			notifyOrderID := localOrder.ID
+			if localOrder.ParentID != nil {
+				notifyOrderID = *localOrder.ParentID
+			}
+			go s.fulfillSvc.NotifyBotOrderFulfilled(localOrder.UserID, notifyOrderID)
+		}
+
 		logger.Infow("procurement_order_fulfilled",
 			"procurement_order_id", procOrder.ID,
 			"local_order_id", procOrder.LocalOrderID,

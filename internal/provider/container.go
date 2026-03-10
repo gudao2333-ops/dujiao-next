@@ -220,7 +220,10 @@ func (c *Container) initServices() {
 		AffiliateService: c.AffiliateService,
 		ExpireMinutes:    c.Config.Order.PaymentExpireMinutes,
 	})
-	c.FulfillmentService = service.NewFulfillmentService(c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.QueueClient)
+	c.FulfillmentService = service.NewFulfillmentService(
+		c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.QueueClient,
+		c.UserOAuthIdentityRepo,
+	)
 	c.CardSecretService = service.NewCardSecretService(c.CardSecretRepo, c.CardSecretBatchRepo, c.ProductRepo, c.ProductSKURepo)
 	c.GiftCardService = service.NewGiftCardService(c.GiftCardRepo, c.UserRepo, c.WalletService, c.SettingService)
 	c.CouponAdminService = service.NewCouponAdminService(c.CouponRepo)
