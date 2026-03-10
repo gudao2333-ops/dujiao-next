@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -17,40 +16,27 @@ import (
 
 // GetWallet GET /api/v1/channel/wallet?telegram_user_id=xxx
 func (h *Handler) GetWallet(c *gin.Context) {
-	telegramUserID := c.Query("telegram_user_id")
-	if telegramUserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "invalid_request",
-			"error_message": "telegram_user_id is required",
-		})
+	channelUserID := channelUserIDFromQuery(c)
+	if channelUserID == "" {
+		respondChannelError(c, 400, 400, "validation_error", "error.bad_request", nil)
 		return
 	}
 
-	userID, err := h.resolveOrCreateTelegramUser(telegramUserID, "")
+	userID, err := h.provisionTelegramChannelUserID(service.TelegramChannelIdentityInput{ChannelUserID: channelUserID})
 	if err != nil {
-		logger.Errorw("channel_wallet_resolve_user", "telegram_user_id", telegramUserID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "user_resolve_failed",
-			"error_message": "failed to resolve telegram user",
-		})
+		logger.Errorw("channel_wallet_resolve_user", "channel_user_id", channelUserID, "error", err)
+		respondChannelIdentityServiceError(c, err)
 		return
 	}
 
 	account, err := h.WalletService.GetAccount(userID)
 	if err != nil {
 		logger.Errorw("channel_wallet_get_account", "user_id", userID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "wallet_error",
-			"error_message": "failed to get wallet account",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":       true,
+	respondChannelSuccess(c, gin.H{
 		"balance":  account.Balance.StringFixed(2),
 		"currency": "CNY",
 	})
@@ -58,13 +44,9 @@ func (h *Handler) GetWallet(c *gin.Context) {
 
 // GetWalletTransactions GET /api/v1/channel/wallet/transactions?telegram_user_id=xxx&page=1&page_size=5
 func (h *Handler) GetWalletTransactions(c *gin.Context) {
-	telegramUserID := c.Query("telegram_user_id")
-	if telegramUserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "invalid_request",
-			"error_message": "telegram_user_id is required",
-		})
+	channelUserID := channelUserIDFromQuery(c)
+	if channelUserID == "" {
+		respondChannelError(c, 400, 400, "validation_error", "error.bad_request", nil)
 		return
 	}
 
@@ -77,14 +59,10 @@ func (h *Handler) GetWalletTransactions(c *gin.Context) {
 		pageSize = 5
 	}
 
-	userID, err := h.resolveOrCreateTelegramUser(telegramUserID, "")
+	userID, err := h.provisionTelegramChannelUserID(service.TelegramChannelIdentityInput{ChannelUserID: channelUserID})
 	if err != nil {
-		logger.Errorw("channel_wallet_txns_resolve_user", "telegram_user_id", telegramUserID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "user_resolve_failed",
-			"error_message": "failed to resolve telegram user",
-		})
+		logger.Errorw("channel_wallet_txns_resolve_user", "channel_user_id", channelUserID, "error", err)
+		respondChannelIdentityServiceError(c, err)
 		return
 	}
 
@@ -95,11 +73,7 @@ func (h *Handler) GetWalletTransactions(c *gin.Context) {
 	})
 	if err != nil {
 		logger.Errorw("channel_wallet_list_txns", "user_id", userID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "wallet_error",
-			"error_message": "failed to list transactions",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
@@ -126,52 +100,43 @@ func (h *Handler) GetWalletTransactions(c *gin.Context) {
 
 	totalPages := (total + int64(pageSize) - 1) / int64(pageSize)
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":           true,
-		"transactions": items,
-		"pagination": gin.H{
-			"page":        page,
-			"page_size":   pageSize,
-			"total":       total,
-			"total_pages": totalPages,
-		},
+	respondChannelSuccess(c, gin.H{
+		"items":       items,
+		"page":        page,
+		"page_size":   pageSize,
+		"total":       total,
+		"total_pages": totalPages,
 	})
 }
 
 // CreateWalletRecharge POST /api/v1/channel/wallet/recharge
 func (h *Handler) CreateWalletRecharge(c *gin.Context) {
 	var req struct {
-		TelegramUserID string `json:"telegram_user_id" binding:"required"`
+		ChannelUserID  string `json:"channel_user_id"`
+		TelegramUserID string `json:"telegram_user_id"`
 		Amount         string `json:"amount" binding:"required"`
 		ChannelID      uint   `json:"channel_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "invalid_request",
-			"error_message": err.Error(),
-		})
+		respondChannelBindError(c, err)
+		return
+	}
+	channelUserID := channelUserIDValue(req.ChannelUserID, req.TelegramUserID)
+	if channelUserID == "" {
+		respondChannelError(c, 400, 400, "validation_error", "error.bad_request", nil)
 		return
 	}
 
-	userID, err := h.resolveOrCreateTelegramUser(req.TelegramUserID, "")
+	userID, err := h.provisionTelegramChannelUserID(service.TelegramChannelIdentityInput{ChannelUserID: channelUserID})
 	if err != nil {
-		logger.Errorw("channel_wallet_recharge_resolve_user", "telegram_user_id", req.TelegramUserID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "user_resolve_failed",
-			"error_message": "failed to resolve telegram user",
-		})
+		logger.Errorw("channel_wallet_recharge_resolve_user", "channel_user_id", channelUserID, "error", err)
+		respondChannelIdentityServiceError(c, err)
 		return
 	}
 
 	amount, err := decimal.NewFromString(strings.TrimSpace(req.Amount))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "invalid_amount",
-			"error_message": "invalid amount format",
-		})
+		respondChannelError(c, 400, 400, "validation_error", "error.bad_request", nil)
 		return
 	}
 
@@ -187,16 +152,11 @@ func (h *Handler) CreateWalletRecharge(c *gin.Context) {
 	})
 	if err != nil {
 		logger.Errorw("channel_wallet_recharge_create", "user_id", userID, "error", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "recharge_failed",
-			"error_message": err.Error(),
-		})
+		respondChannelError(c, 400, 400, "payment_create_failed", "error.payment_create_failed", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":          true,
+	respondChannelSuccess(c, gin.H{
 		"recharge_no": result.Recharge.RechargeNo,
 		"payment": gin.H{
 			"id":         result.Payment.ID,

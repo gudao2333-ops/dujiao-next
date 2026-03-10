@@ -67,7 +67,11 @@ func RateLimitMiddleware(client *redis.Client, rule RateLimitRule, keyFunc RateL
 		).Result()
 		if err != nil {
 			msg := i18n.T(i18n.ResolveLocale(c), "error.rate_limit_unavailable")
-			response.Error(c, response.CodeInternal, msg)
+			if isChannelAPIRequest(c) {
+				response.ChannelError(c, 500, response.CodeInternal, msg, "internal_error")
+			} else {
+				response.Error(c, response.CodeInternal, msg)
+			}
 			c.Abort()
 			return
 		}
@@ -75,14 +79,22 @@ func RateLimitMiddleware(client *redis.Client, rule RateLimitRule, keyFunc RateL
 		values, ok := result.([]interface{})
 		if !ok || len(values) < 2 {
 			msg := i18n.T(i18n.ResolveLocale(c), "error.rate_limit_unavailable")
-			response.Error(c, response.CodeInternal, msg)
+			if isChannelAPIRequest(c) {
+				response.ChannelError(c, 500, response.CodeInternal, msg, "internal_error")
+			} else {
+				response.Error(c, response.CodeInternal, msg)
+			}
 			c.Abort()
 			return
 		}
 		count, ok := toInt64(values[0])
 		if !ok {
 			msg := i18n.T(i18n.ResolveLocale(c), "error.rate_limit_unavailable")
-			response.Error(c, response.CodeInternal, msg)
+			if isChannelAPIRequest(c) {
+				response.ChannelError(c, 500, response.CodeInternal, msg, "internal_error")
+			} else {
+				response.Error(c, response.CodeInternal, msg)
+			}
 			c.Abort()
 			return
 		}
@@ -100,13 +112,24 @@ func RateLimitMiddleware(client *redis.Client, rule RateLimitRule, keyFunc RateL
 				msgKey = "error.rate_limited"
 			}
 			msg := i18n.Sprintf(i18n.ResolveLocale(c), msgKey, waitSeconds)
-			response.Error(c, response.CodeTooManyRequests, msg)
+			if isChannelAPIRequest(c) {
+				response.ChannelError(c, 429, response.CodeTooManyRequests, msg, "rate_limit_exceeded")
+			} else {
+				response.Error(c, response.CodeTooManyRequests, msg)
+			}
 			c.Abort()
 			return
 		}
 
 		c.Next()
 	}
+}
+
+func isChannelAPIRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return strings.HasPrefix(c.Request.URL.Path, "/api/v1/channel")
 }
 
 // KeyByIP 使用 IP 作为限流 key

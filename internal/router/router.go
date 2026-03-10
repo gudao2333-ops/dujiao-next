@@ -184,6 +184,10 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 		{
 			channelAPI.GET("/telegram/config", channelHandler.GetBotConfig)
 			channelAPI.POST("/telegram/heartbeat", channelHandler.ReportHeartbeat)
+			channelAPI.POST("/identities/telegram/resolve", channelHandler.ResolveTelegramIdentity)
+			channelAPI.POST("/identities/telegram/provision", channelHandler.ProvisionTelegramIdentity)
+			channelAPI.POST("/identities/telegram/bind", channelHandler.BindTelegramIdentity)
+			channelAPI.GET("/me", channelHandler.GetCurrentIdentity)
 
 			// Catalog 端点（商品浏览）
 			channelAPI.GET("/catalog/categories", channelHandler.GetCategories)
@@ -191,11 +195,16 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 			channelAPI.GET("/catalog/products/:id", channelHandler.GetProductDetail)
 
 			// Order / Payment 端点（购买流程）
+			channelAPI.POST("/orders/preview", channelHandler.PreviewOrder)
 			channelAPI.POST("/orders", channelHandler.CreateOrder)
 			channelAPI.GET("/orders", channelHandler.ListOrders)
+			channelAPI.GET("/orders/by-order-no/:order_no", channelHandler.GetOrderByOrderNo)
 			channelAPI.GET("/orders/:id", channelHandler.GetOrderStatus)
 			channelAPI.POST("/orders/:id/cancel", channelHandler.CancelOrder)
 			channelAPI.GET("/payment-channels", channelHandler.GetPaymentChannels)
+			channelAPI.GET("/payment-methods", channelHandler.GetPaymentChannels)
+			channelAPI.GET("/payments/latest", channelHandler.GetLatestPayment)
+			channelAPI.GET("/payments/:id", channelHandler.GetPaymentDetail)
 			channelAPI.POST("/payments", channelHandler.CreatePayment)
 
 			// Wallet 端点（钱包）

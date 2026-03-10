@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"net/http"
 	"time"
 
 	"github.com/dujiao-next/internal/logger"
@@ -15,11 +14,7 @@ import (
 func (h *Handler) GetBotConfig(c *gin.Context) {
 	config, err := h.SettingService.GetTelegramBotConfig()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "internal_error",
-			"error_message": "failed to get bot config",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
@@ -40,8 +35,7 @@ func (h *Handler) GetBotConfig(c *gin.Context) {
 		runtimeStatus = &service.TelegramBotRuntimeStatusSetting{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":             true,
+	respondChannelSuccess(c, gin.H{
 		"config":         service.SerializeTelegramBotConfigForChannel(*config, botToken),
 		"config_version": runtimeStatus.ConfigVersion,
 	})
@@ -57,11 +51,7 @@ type reportHeartbeatRequest struct {
 func (h *Handler) ReportHeartbeat(c *gin.Context) {
 	var req reportHeartbeatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"ok":            false,
-			"error_code":    "bad_request",
-			"error_message": "invalid request body",
-		})
+		respondChannelBindError(c, err)
 		return
 	}
 
@@ -84,16 +74,9 @@ func (h *Handler) ReportHeartbeat(c *gin.Context) {
 
 	if err := h.SettingService.UpdateTelegramBotRuntimeStatus(updated); err != nil {
 		logger.Errorw("channel_heartbeat_update_failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "internal_error",
-			"error_message": "failed to update runtime status",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":             true,
-		"config_version": updated.ConfigVersion,
-	})
+	respondChannelSuccess(c, gin.H{"config_version": updated.ConfigVersion})
 }

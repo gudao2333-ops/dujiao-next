@@ -111,6 +111,9 @@ func buildVerifyCodeContent(code, purpose, locale string) (string, string) {
 		case constants.VerifyPurposeReset:
 			subject = "重置密碼驗證碼"
 			purposeText = "重置密碼"
+		case constants.VerifyPurposeTelegramBind:
+			subject = "Telegram 綁定驗證碼"
+			purposeText = "綁定 Telegram"
 		case constants.VerifyPurposeChangeEmailOld, constants.VerifyPurposeChangeEmailNew:
 			subject = "更換郵箱驗證碼"
 			purposeText = "更換郵箱"
@@ -127,6 +130,9 @@ func buildVerifyCodeContent(code, purpose, locale string) (string, string) {
 		case constants.VerifyPurposeReset:
 			subject = "Password Reset Code"
 			purposeText = "password reset"
+		case constants.VerifyPurposeTelegramBind:
+			subject = "Telegram Binding Code"
+			purposeText = "binding Telegram"
 		case constants.VerifyPurposeChangeEmailOld, constants.VerifyPurposeChangeEmailNew:
 			subject = "Change Email Code"
 			purposeText = "change email"
@@ -143,6 +149,9 @@ func buildVerifyCodeContent(code, purpose, locale string) (string, string) {
 		case constants.VerifyPurposeReset:
 			subject = "重置密码验证码"
 			purposeText = "重置密码"
+		case constants.VerifyPurposeTelegramBind:
+			subject = "Telegram 绑定验证码"
+			purposeText = "绑定 Telegram"
 		case constants.VerifyPurposeChangeEmailOld, constants.VerifyPurposeChangeEmailNew:
 			subject = "更换邮箱验证码"
 			purposeText = "更换邮箱"

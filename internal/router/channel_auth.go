@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dujiao-next/internal/http/response"
+	"github.com/dujiao-next/internal/i18n"
 	"github.com/dujiao-next/internal/logger"
 	"github.com/dujiao-next/internal/provider"
 	"github.com/dujiao-next/internal/service"
@@ -27,21 +29,15 @@ func ChannelAPIAuthMiddleware(container *provider.Container) gin.HandlerFunc {
 		signature := c.GetHeader("X-Channel-Signature")
 
 		if channelKey == "" || timestampStr == "" || signature == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"ok":            false,
-				"error_code":    "missing_auth_headers",
-				"error_message": "missing channel authentication headers",
-			})
+			response.ChannelError(c, http.StatusUnauthorized, response.CodeUnauthorized, i18n.T(i18n.ResolveLocale(c), "error.unauthorized"), "channel_client_unauthorized")
+			c.Abort()
 			return
 		}
 
 		timestamp, err := upstream.ParseTimestamp(timestampStr)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"ok":            false,
-				"error_code":    "invalid_timestamp",
-				"error_message": "invalid timestamp format",
-			})
+			response.ChannelError(c, http.StatusUnauthorized, response.CodeUnauthorized, i18n.T(i18n.ResolveLocale(c), "error.unauthorized"), "channel_client_unauthorized")
+			c.Abort()
 			return
 		}
 
@@ -50,11 +46,8 @@ func ChannelAPIAuthMiddleware(container *provider.Container) gin.HandlerFunc {
 		if c.Request.Body != nil {
 			body, err = io.ReadAll(c.Request.Body)
 			if err != nil {
-				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-					"ok":            false,
-					"error_code":    "bad_request",
-					"error_message": "failed to read request body",
-				})
+				response.ChannelError(c, http.StatusBadRequest, response.CodeBadRequest, i18n.T(i18n.ResolveLocale(c), "error.bad_request"), "validation_error")
+				c.Abort()
 				return
 			}
 			// 重置 body 供后续 handler 读取
@@ -70,37 +63,18 @@ func ChannelAPIAuthMiddleware(container *provider.Container) gin.HandlerFunc {
 		if err != nil {
 			switch err {
 			case service.ErrChannelTimestampExpired:
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"ok":            false,
-					"error_code":    "timestamp_expired",
-					"error_message": "timestamp expired",
-				})
+				response.ChannelError(c, http.StatusUnauthorized, response.CodeUnauthorized, i18n.T(i18n.ResolveLocale(c), "error.unauthorized"), "channel_client_unauthorized")
 			case service.ErrChannelClientNotFound:
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"ok":            false,
-					"error_code":    "invalid_channel_key",
-					"error_message": "channel key is invalid",
-				})
+				response.ChannelError(c, http.StatusUnauthorized, response.CodeUnauthorized, i18n.T(i18n.ResolveLocale(c), "error.unauthorized"), "channel_client_unauthorized")
 			case service.ErrChannelClientDisabled:
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"ok":            false,
-					"error_code":    "channel_disabled",
-					"error_message": "channel client is disabled",
-				})
+				response.ChannelError(c, http.StatusForbidden, response.CodeForbidden, i18n.T(i18n.ResolveLocale(c), "error.forbidden"), "channel_client_disabled")
 			case service.ErrChannelSignatureInvalid:
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"ok":            false,
-					"error_code":    "invalid_signature",
-					"error_message": "signature verification failed",
-				})
+				response.ChannelError(c, http.StatusUnauthorized, response.CodeUnauthorized, i18n.T(i18n.ResolveLocale(c), "error.unauthorized"), "channel_client_unauthorized")
 			default:
 				logger.Errorw("channel_auth_error", "error", err)
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"ok":            false,
-					"error_code":    "internal_error",
-					"error_message": "internal error",
-				})
+				response.ChannelError(c, http.StatusInternalServerError, response.CodeInternal, i18n.T(i18n.ResolveLocale(c), "error.internal_error"), "internal_error")
 			}
+			c.Abort()
 			return
 		}
 

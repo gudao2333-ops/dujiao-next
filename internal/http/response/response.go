@@ -25,6 +25,15 @@ type PageResponse struct {
 	Pagination Pagination  `json:"pagination"`
 }
 
+// ChannelResponse 渠道 API 响应结构。
+type ChannelResponse struct {
+	StatusCode int         `json:"status_code"`
+	Msg        string      `json:"msg"`
+	Data       interface{} `json:"data,omitempty"`
+	ErrorCode  string      `json:"error_code,omitempty"`
+	RequestID  string      `json:"request_id,omitempty"`
+}
+
 // Pagination 分页信息
 type Pagination struct {
 	Page      int   `json:"page"`
@@ -121,15 +130,49 @@ func BadRequest(c *gin.Context, msg string) {
 	Error(c, CodeBadRequest, msg)
 }
 
+// ChannelSuccess 渠道 API 成功响应。
+func ChannelSuccess(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusOK, ChannelResponse{
+		StatusCode: CodeOK,
+		Msg:        responseMsgSuccess,
+		Data:       data,
+		RequestID:  currentRequestID(c),
+	})
+}
+
+// ChannelSuccessWithMsg 渠道 API 成功响应（自定义消息）。
+func ChannelSuccessWithMsg(c *gin.Context, msg string, data interface{}) {
+	c.JSON(http.StatusOK, ChannelResponse{
+		StatusCode: CodeOK,
+		Msg:        msg,
+		Data:       data,
+		RequestID:  currentRequestID(c),
+	})
+}
+
+// ChannelError 渠道 API 错误响应。
+func ChannelError(c *gin.Context, httpStatus, statusCode int, msg, errorCode string) {
+	c.JSON(httpStatus, ChannelResponse{
+		StatusCode: statusCode,
+		Msg:        msg,
+		ErrorCode:  errorCode,
+		RequestID:  currentRequestID(c),
+	})
+}
+
+// ChannelErrorWithData 渠道 API 错误响应（附带数据）。
+func ChannelErrorWithData(c *gin.Context, httpStatus, statusCode int, msg, errorCode string, data interface{}) {
+	c.JSON(httpStatus, ChannelResponse{
+		StatusCode: statusCode,
+		Msg:        msg,
+		Data:       data,
+		ErrorCode:  errorCode,
+		RequestID:  currentRequestID(c),
+	})
+}
+
 func attachRequestID(c *gin.Context, data interface{}) interface{} {
-	requestID := ""
-	if c != nil {
-		if value, ok := c.Get("request_id"); ok {
-			if id, ok := value.(string); ok {
-				requestID = id
-			}
-		}
-	}
+	requestID := currentRequestID(c)
 	if requestID == "" {
 		return data
 	}
@@ -153,4 +196,16 @@ func attachRequestID(c *gin.Context, data interface{}) interface{} {
 			"data":       data,
 		}
 	}
+}
+
+func currentRequestID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	if value, ok := c.Get("request_id"); ok {
+		if id, ok := value.(string); ok {
+			return id
+		}
+	}
+	return ""
 }

@@ -236,6 +236,7 @@ const (
 const (
 	VerifyPurposeRegister       = "register"
 	VerifyPurposeReset          = "reset"
+	VerifyPurposeTelegramBind   = "telegram_bind"
 	VerifyPurposeChangeEmailOld = "change_email_old"
 	VerifyPurposeChangeEmailNew = "change_email_new"
 )

@@ -3,7 +3,6 @@ package channel
 import (
 	"fmt"
 	"math"
-	"net/http"
 	"strconv"
 
 	"github.com/dujiao-next/internal/logger"
@@ -20,11 +19,7 @@ func (h *Handler) GetCategories(c *gin.Context) {
 	categories, err := h.CategoryService.List()
 	if err != nil {
 		logger.Errorw("channel_catalog_list_categories", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "internal_error",
-			"error_message": "failed to list categories",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
@@ -55,10 +50,7 @@ func (h *Handler) GetCategories(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":         true,
-		"categories": items,
-	})
+	respondChannelSuccess(c, gin.H{"items": items})
 }
 
 // GetProducts GET /api/v1/channel/catalog/products?locale=zh-CN&category_id=1&page=1&page_size=5
@@ -79,11 +71,7 @@ func (h *Handler) GetProducts(c *gin.Context) {
 	products, total, err := h.ProductService.ListPublic(categoryID, "", page, pageSize)
 	if err != nil {
 		logger.Errorw("channel_catalog_list_products", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "internal_error",
-			"error_message": "failed to list products",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 
@@ -135,15 +123,12 @@ func (h *Handler) GetProducts(c *gin.Context) {
 
 	totalPages := int64(math.Ceil(float64(total) / float64(pageSize)))
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok":       true,
-		"products": items,
-		"pagination": gin.H{
-			"page":        page,
-			"page_size":   pageSize,
-			"total":       total,
-			"total_pages": totalPages,
-		},
+	respondChannelSuccess(c, gin.H{
+		"items":      items,
+		"total":      total,
+		"page":       page,
+		"page_size":  pageSize,
+		"total_page": totalPages,
 	})
 }
 
@@ -156,19 +141,11 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 	product, err := h.ProductRepo.GetByID(id)
 	if err != nil {
 		logger.Errorw("channel_catalog_get_product", "id", id, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"ok":            false,
-			"error_code":    "internal_error",
-			"error_message": "failed to get product",
-		})
+		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
 	if product == nil || !product.IsActive {
-		c.JSON(http.StatusNotFound, gin.H{
-			"ok":            false,
-			"error_code":    "not_found",
-			"error_message": "product not found",
-		})
+		respondChannelError(c, 404, 404, "product_not_found", "error.product_not_found", nil)
 		return
 	}
 
@@ -218,20 +195,17 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"ok": true,
-		"product": gin.H{
-			"id":               product.ID,
-			"title":            title,
-			"description":      description,
-			"image_url":        imageURL,
-			"price_from":       product.PriceAmount.String(),
-			"currency":         currency,
-			"stock_status":     computeStockStatus(product.FulfillmentType, product.AutoStockAvailable, product.ManualStockTotal),
-			"category_name":    resolveLocalizedJSON(product.Category.NameJSON, locale, defaultLocale),
-			"fulfillment_type": product.FulfillmentType,
-			"skus":             skus,
-		},
+	respondChannelSuccess(c, gin.H{
+		"id":               product.ID,
+		"title":            title,
+		"description":      description,
+		"image_url":        imageURL,
+		"price_from":       product.PriceAmount.String(),
+		"currency":         currency,
+		"stock_status":     computeStockStatus(product.FulfillmentType, product.AutoStockAvailable, product.ManualStockTotal),
+		"category_name":    resolveLocalizedJSON(product.Category.NameJSON, locale, defaultLocale),
+		"fulfillment_type": product.FulfillmentType,
+		"skus":             skus,
 	})
 }
 

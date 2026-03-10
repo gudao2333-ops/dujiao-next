@@ -148,6 +148,19 @@ func (s *UserAuthService) SendVerifyCode(email, purpose, locale string) error {
 		}
 	}
 
+	if purpose == constants.VerifyPurposeTelegramBind {
+		user, err := s.userRepo.GetByEmail(normalized)
+		if err != nil {
+			return err
+		}
+		if user == nil {
+			return ErrNotFound
+		}
+		if strings.TrimSpace(user.Locale) != "" {
+			locale = user.Locale
+		}
+	}
+
 	return s.sendVerifyCode(normalized, strings.ToLower(purpose), locale)
 }
 
@@ -346,7 +359,7 @@ func NormalizeEmail(email string) (string, error) {
 
 func isVerifyPurposeSupported(purpose string) bool {
 	switch strings.ToLower(strings.TrimSpace(purpose)) {
-	case constants.VerifyPurposeRegister, constants.VerifyPurposeReset, constants.VerifyPurposeChangeEmailOld, constants.VerifyPurposeChangeEmailNew:
+	case constants.VerifyPurposeRegister, constants.VerifyPurposeReset, constants.VerifyPurposeTelegramBind, constants.VerifyPurposeChangeEmailOld, constants.VerifyPurposeChangeEmailNew:
 		return true
 	default:
 		return false
