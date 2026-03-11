@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	GiftCardStatusActive   = "active"
-	GiftCardStatusRedeemed = "redeemed"
-	GiftCardStatusDisabled = "disabled"
+	GiftCardStatusActive      = "active"
+	GiftCardStatusRedeemed    = "redeemed"
+	GiftCardStatusDisabled    = "disabled"
+	GiftCardRedeemModeWallet  = "wallet"
+	GiftCardRedeemModeProduct = "product"
 )
 
 // GiftCard 礼品卡
@@ -25,6 +27,10 @@ type GiftCard struct {
 	RedeemedAt     *time.Time     `gorm:"index" json:"redeemed_at"`                                       // 兑换时间
 	RedeemedUserID *uint          `gorm:"index" json:"redeemed_user_id,omitempty"`                        // 兑换用户ID
 	WalletTxnID    *uint          `gorm:"index" json:"wallet_txn_id,omitempty"`                           // 钱包流水ID
+	ProductID      *uint          `gorm:"index" json:"product_id,omitempty"`                              // 兑换商品ID
+	SKUID          *uint          `gorm:"index" json:"sku_id,omitempty"`                                  // 兑换SKU ID
+	RedeemOrderID  *uint          `gorm:"index" json:"redeem_order_id,omitempty"`                         // 兑换订单ID
+	RedeemMode     string         `gorm:"type:varchar(24);not null;default:'wallet'" json:"redeem_mode"`  // 兑换模式
 	CreatedAt      time.Time      `gorm:"index" json:"created_at"`                                        // 创建时间
 	UpdatedAt      time.Time      `gorm:"index" json:"updated_at"`                                        // 更新时间
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`                                                 // 软删除时间

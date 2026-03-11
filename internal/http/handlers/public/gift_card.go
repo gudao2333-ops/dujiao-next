@@ -49,7 +49,7 @@ func (h *Handler) RedeemGiftCard(c *gin.Context) {
 		}
 	}
 
-	card, account, txn, err := h.GiftCardService.RedeemGiftCard(service.GiftCardRedeemInput{
+	result, err := h.GiftCardService.RedeemGiftCard(service.GiftCardRedeemInput{
 		UserID: uid,
 		Code:   strings.TrimSpace(req.Code),
 	})
@@ -65,6 +65,10 @@ func (h *Handler) RedeemGiftCard(c *gin.Context) {
 			shared.RespondError(c, response.CodeBadRequest, "error.gift_card_disabled", nil)
 		case errors.Is(err, service.ErrGiftCardRedeemed):
 			shared.RespondError(c, response.CodeBadRequest, "error.gift_card_redeemed", nil)
+		case errors.Is(err, service.ErrGiftCardRedeemTargetInvalid):
+			shared.RespondError(c, response.CodeBadRequest, "error.gift_card_invalid", nil)
+		case errors.Is(err, service.ErrManualStockInsufficient):
+			shared.RespondError(c, response.CodeBadRequest, "error.manual_stock_insufficient", nil)
 		default:
 			shared.RespondError(c, response.CodeInternal, "error.gift_card_redeem_failed", err)
 		}
@@ -72,9 +76,14 @@ func (h *Handler) RedeemGiftCard(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"gift_card":    card,
-		"wallet":       account,
-		"transaction":  txn,
-		"wallet_delta": card.Amount,
+		"gift_card":    result.Card,
+		"wallet":       result.WalletAccount,
+		"transaction":  result.WalletTransaction,
+		"wallet_delta": result.Card.Amount,
+		"redeem_mode":  result.RedeemMode,
+		"order_id":     result.OrderID,
+		"order_no":     result.OrderNo,
+		"order_status": result.OrderStatus,
+		"redirect_url": result.RedirectURL,
 	})
 }

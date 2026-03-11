@@ -65,6 +65,35 @@ func NewOrderService(opts OrderServiceOptions) *OrderService {
 	}
 }
 
+func (s *OrderService) withTx(tx *gorm.DB) *OrderService {
+	if s == nil || tx == nil {
+		return s
+	}
+	cloned := *s
+	if cloned.orderRepo != nil {
+		cloned.orderRepo = cloned.orderRepo.WithTx(tx)
+	}
+	if cloned.productRepo != nil {
+		cloned.productRepo = cloned.productRepo.WithTx(tx)
+	}
+	if cloned.productSKURepo != nil {
+		cloned.productSKURepo = cloned.productSKURepo.WithTx(tx)
+	}
+	if cloned.cardSecretRepo != nil {
+		cloned.cardSecretRepo = cloned.cardSecretRepo.WithTx(tx)
+	}
+	if cloned.couponRepo != nil {
+		cloned.couponRepo = cloned.couponRepo.WithTx(tx)
+	}
+	if cloned.couponUsageRepo != nil {
+		cloned.couponUsageRepo = cloned.couponUsageRepo.WithTx(tx)
+	}
+	if cloned.promotionRepo != nil {
+		cloned.promotionRepo = cloned.promotionRepo.WithTx(tx)
+	}
+	return &cloned
+}
+
 // CreateOrderInput 创建订单输入
 type CreateOrderInput struct {
 	UserID              uint
