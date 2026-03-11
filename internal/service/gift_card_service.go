@@ -25,10 +25,14 @@ const (
 
 // GiftCardService 礼品卡服务
 type GiftCardService struct {
-	repo          repository.GiftCardRepository
-	userRepo      repository.UserRepository
-	walletService *WalletService
-	settingSvc    *SettingService
+	repo           repository.GiftCardRepository
+	userRepo       repository.UserRepository
+	productRepo    repository.ProductRepository
+	productSKURepo repository.ProductSKURepository
+	walletService  *WalletService
+	settingSvc     *SettingService
+	orderService   *OrderService
+	fulfillSvc     *FulfillmentService
 }
 
 // GenerateGiftCardsInput 生成礼品卡输入
@@ -36,6 +40,8 @@ type GenerateGiftCardsInput struct {
 	Name      string
 	Quantity  int
 	Amount    models.Money
+	ProductID uint
+	SKUID     uint
 	ExpiresAt *time.Time
 	CreatedBy *uint
 }
@@ -70,13 +76,28 @@ type GiftCardRedeemInput struct {
 	Code   string
 }
 
+type GiftCardRedeemResult struct {
+	Card              *models.GiftCard
+	WalletAccount     *models.WalletAccount
+	WalletTransaction *models.WalletTransaction
+	RedeemMode        string
+	OrderID           uint
+	OrderNo           string
+	OrderStatus       string
+	RedirectURL       string
+}
+
 // NewGiftCardService 创建礼品卡服务
-func NewGiftCardService(repo repository.GiftCardRepository, userRepo repository.UserRepository, walletService *WalletService, settingSvc *SettingService) *GiftCardService {
+func NewGiftCardService(repo repository.GiftCardRepository, userRepo repository.UserRepository, productRepo repository.ProductRepository, productSKURepo repository.ProductSKURepository, walletService *WalletService, settingSvc *SettingService, orderService *OrderService, fulfillSvc *FulfillmentService) *GiftCardService {
 	return &GiftCardService{
-		repo:          repo,
-		userRepo:      userRepo,
-		walletService: walletService,
-		settingSvc:    settingSvc,
+		repo:           repo,
+		userRepo:       userRepo,
+		productRepo:    productRepo,
+		productSKURepo: productSKURepo,
+		walletService:  walletService,
+		settingSvc:     settingSvc,
+		orderService:   orderService,
+		fulfillSvc:     fulfillSvc,
 	}
 }
 
@@ -94,8 +115,32 @@ func (s *GiftCardService) GenerateGiftCards(input GenerateGiftCardsInput) (*mode
 		return nil, 0, ErrGiftCardInvalid
 	}
 	amount := input.Amount.Decimal.Round(2)
-	if amount.LessThanOrEqual(decimal.Zero) {
-		return nil, 0, ErrGiftCardInvalid
+	hasProductTarget := input.ProductID > 0 || input.SKUID > 0
+	redeemMode := models.GiftCardRedeemModeWallet
+	if hasProductTarget {
+		redeemMode = models.GiftCardRedeemModeProduct
+		if input.ProductID == 0 || input.SKUID == 0 {
+			return nil, 0, ErrGiftCardInvalid
+		}
+		if amount.GreaterThan(decimal.Zero) {
+			return nil, 0, ErrGiftCardInvalid
+		}
+		if s.productRepo == nil || s.productSKURepo == nil {
+			return nil, 0, ErrGiftCardInvalid
+		}
+		product, err := s.productRepo.GetByID(strconv.FormatUint(uint64(input.ProductID), 10))
+		if err != nil || product == nil || !product.IsActive {
+			return nil, 0, ErrGiftCardInvalid
+		}
+		sku, err := s.productSKURepo.GetByID(input.SKUID)
+		if err != nil || sku == nil || !sku.IsActive || sku.ProductID != input.ProductID {
+			return nil, 0, ErrGiftCardInvalid
+		}
+		amount = decimal.Zero
+	} else {
+		if amount.LessThanOrEqual(decimal.Zero) {
+			return nil, 0, ErrGiftCardInvalid
+		}
 	}
 	currency := s.resolveSiteCurrency()
 
@@ -116,14 +161,17 @@ func (s *GiftCardService) GenerateGiftCards(input GenerateGiftCardsInput) (*mode
 	for i := 0; i < input.Quantity; i++ {
 		code := generateGiftCardCode(now, i)
 		cards = append(cards, models.GiftCard{
-			Name:      name,
-			Code:      code,
-			Amount:    models.NewMoneyFromDecimal(amount),
-			Currency:  currency,
-			Status:    models.GiftCardStatusActive,
-			ExpiresAt: normalizeGiftCardExpireAt(input.ExpiresAt),
-			CreatedAt: now,
-			UpdatedAt: now,
+			Name:       name,
+			Code:       code,
+			Amount:     models.NewMoneyFromDecimal(amount),
+			Currency:   currency,
+			Status:     models.GiftCardStatusActive,
+			ProductID:  nullableUint(input.ProductID),
+			SKUID:      nullableUint(input.SKUID),
+			RedeemMode: redeemMode,
+			ExpiresAt:  normalizeGiftCardExpireAt(input.ExpiresAt),
+			CreatedAt:  now,
+			UpdatedAt:  now,
 		})
 	}
 
@@ -343,21 +391,17 @@ func (s *GiftCardService) ExportGiftCards(ids []uint, format string) ([]byte, st
 }
 
 // RedeemGiftCard 兑换礼品卡
-func (s *GiftCardService) RedeemGiftCard(input GiftCardRedeemInput) (*models.GiftCard, *models.WalletAccount, *models.WalletTransaction, error) {
-	if s == nil || s.repo == nil || s.walletService == nil {
-		return nil, nil, nil, ErrGiftCardFetchFailed
+func (s *GiftCardService) RedeemGiftCard(input GiftCardRedeemInput) (*GiftCardRedeemResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrGiftCardFetchFailed
 	}
 	code := strings.TrimSpace(strings.ToUpper(input.Code))
 	if input.UserID == 0 || code == "" {
-		return nil, nil, nil, ErrGiftCardInvalid
+		return nil, ErrGiftCardInvalid
 	}
 
-	var (
-		resultCard  *models.GiftCard
-		resultAcc   *models.WalletAccount
-		resultTxn   *models.WalletTransaction
-		resultError error
-	)
+	result := &GiftCardRedeemResult{}
+	postCommitAutoFulfillOrderID := uint(0)
 	err := s.repo.Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.WithTx(tx)
 		card, err := repo.GetByCodeForUpdate(code)
@@ -379,10 +423,68 @@ func (s *GiftCardService) RedeemGiftCard(input GiftCardRedeemInput) (*models.Gif
 		if isGiftCardExpired(card.ExpiresAt, time.Now()) {
 			return ErrGiftCardExpired
 		}
-		if card.Amount.Decimal.Round(2).LessThanOrEqual(decimal.Zero) {
-			return ErrGiftCardInvalid
+
+		redeemMode := strings.TrimSpace(card.RedeemMode)
+		if redeemMode == "" {
+			redeemMode = models.GiftCardRedeemModeWallet
+		}
+		if card.ProductID != nil {
+			redeemMode = models.GiftCardRedeemModeProduct
 		}
 
+		if redeemMode == models.GiftCardRedeemModeProduct {
+			if s.productRepo == nil || s.productSKURepo == nil {
+				return ErrGiftCardRedeemTargetInvalid
+			}
+			if card.ProductID == nil || card.SKUID == nil || *card.ProductID == 0 || *card.SKUID == 0 {
+				return ErrGiftCardRedeemTargetInvalid
+			}
+			product, err := s.productRepo.GetByID(strconv.FormatUint(uint64(*card.ProductID), 10))
+			if err != nil || product == nil || !product.IsActive {
+				return ErrGiftCardRedeemTargetInvalid
+			}
+			sku, err := s.productSKURepo.GetByID(*card.SKUID)
+			if err != nil || sku == nil || !sku.IsActive || sku.ProductID != *card.ProductID {
+				return ErrGiftCardRedeemTargetInvalid
+			}
+
+			paidOrder, createErr := createPaidRedeemOrderInTx(tx, input.UserID, product, sku, s.resolveSiteCurrency())
+			if createErr != nil {
+				if errors.Is(createErr, ErrManualStockInsufficient) {
+					return ErrManualStockInsufficient
+				}
+				return ErrOrderCreateFailed
+			}
+			if paidOrder == nil {
+				return ErrGiftCardUpdateFailed
+			}
+
+			now := time.Now()
+			card.Status = models.GiftCardStatusRedeemed
+			card.RedeemedUserID = &input.UserID
+			card.RedeemedAt = &now
+			card.RedeemOrderID = &paidOrder.ID
+			card.RedeemMode = models.GiftCardRedeemModeProduct
+			card.UpdatedAt = now
+			if err := repo.Update(card); err != nil {
+				return ErrGiftCardUpdateFailed
+			}
+
+			if shouldAutoFulfill(paidOrder) {
+				postCommitAutoFulfillOrderID = paidOrder.ID
+			}
+			result.Card = card
+			result.RedeemMode = models.GiftCardRedeemModeProduct
+			result.OrderID = paidOrder.ID
+			result.OrderNo = paidOrder.OrderNo
+			result.OrderStatus = paidOrder.Status
+			result.RedirectURL = "/orders/by-order-no/" + paidOrder.OrderNo
+			return nil
+		}
+
+		if s.walletService == nil || card.Amount.Decimal.Round(2).LessThanOrEqual(decimal.Zero) {
+			return ErrGiftCardInvalid
+		}
 		now := time.Now()
 		account, txn, creditErr := s.walletService.CreditInTx(tx, WalletCreditInput{
 			UserID:    input.UserID,
@@ -400,6 +502,7 @@ func (s *GiftCardService) RedeemGiftCard(input GiftCardRedeemInput) (*models.Gif
 		card.Status = models.GiftCardStatusRedeemed
 		card.RedeemedUserID = &input.UserID
 		card.RedeemedAt = &now
+		card.RedeemMode = models.GiftCardRedeemModeWallet
 		if txn != nil && txn.ID > 0 {
 			card.WalletTxnID = &txn.ID
 		}
@@ -407,15 +510,21 @@ func (s *GiftCardService) RedeemGiftCard(input GiftCardRedeemInput) (*models.Gif
 		if err := repo.Update(card); err != nil {
 			return ErrGiftCardUpdateFailed
 		}
-		resultCard = card
-		resultAcc = account
-		resultTxn = txn
+		result.Card = card
+		result.WalletAccount = account
+		result.WalletTransaction = txn
+		result.RedeemMode = models.GiftCardRedeemModeWallet
 		return nil
 	})
 	if err != nil {
-		resultError = err
+		return nil, err
 	}
-	return resultCard, resultAcc, resultTxn, resultError
+	if postCommitAutoFulfillOrderID > 0 && s.fulfillSvc != nil {
+		if _, fulfillErr := s.fulfillSvc.CreateAuto(postCommitAutoFulfillOrderID); fulfillErr != nil && !errors.Is(fulfillErr, ErrFulfillmentExists) {
+			return nil, fulfillErr
+		}
+	}
+	return result, nil
 }
 
 // ResolveRedeemedUsers 批量解析礼品卡兑换用户
@@ -488,6 +597,76 @@ func isGiftCardExpired(expiresAt *time.Time, now time.Time) bool {
 		return false
 	}
 	return expiresAt.Before(now)
+}
+
+func nullableUint(v uint) *uint {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+func createPaidRedeemOrderInTx(tx *gorm.DB, userID uint, product *models.Product, sku *models.ProductSKU, currency string) (*models.Order, error) {
+	if tx == nil || userID == 0 || product == nil || sku == nil {
+		return nil, ErrOrderCreateFailed
+	}
+	now := time.Now()
+	order := &models.Order{
+		OrderNo:                 generateOrderNo(),
+		UserID:                  userID,
+		Status:                  constants.OrderStatusPaid,
+		Currency:                currency,
+		OriginalAmount:          models.NewMoneyFromDecimal(decimal.Zero),
+		DiscountAmount:          models.NewMoneyFromDecimal(decimal.Zero),
+		PromotionDiscountAmount: models.NewMoneyFromDecimal(decimal.Zero),
+		TotalAmount:             models.NewMoneyFromDecimal(decimal.Zero),
+		WalletPaidAmount:        models.NewMoneyFromDecimal(decimal.Zero),
+		OnlinePaidAmount:        models.NewMoneyFromDecimal(decimal.Zero),
+		RefundedAmount:          models.NewMoneyFromDecimal(decimal.Zero),
+		PaidAt:                  &now,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := tx.Create(order).Error; err != nil {
+		return nil, err
+	}
+	fulfillmentType := strings.TrimSpace(product.FulfillmentType)
+	if fulfillmentType == "" {
+		fulfillmentType = constants.FulfillmentTypeManual
+	}
+	item := &models.OrderItem{
+		OrderID:                      order.ID,
+		ProductID:                    product.ID,
+		SKUID:                        sku.ID,
+		TitleJSON:                    product.TitleJSON,
+		SKUSnapshotJSON:              models.JSON{"sku_code": sku.SKUCode, "spec_values": sku.SpecValuesJSON},
+		Tags:                         product.Tags,
+		UnitPrice:                    models.NewMoneyFromDecimal(decimal.Zero),
+		Quantity:                     1,
+		TotalPrice:                   models.NewMoneyFromDecimal(decimal.Zero),
+		CouponDiscount:               models.NewMoneyFromDecimal(decimal.Zero),
+		PromotionDiscount:            models.NewMoneyFromDecimal(decimal.Zero),
+		FulfillmentType:              fulfillmentType,
+		ManualFormSchemaSnapshotJSON: product.ManualFormSchemaJSON,
+		ManualFormSubmissionJSON:     models.JSON{},
+		CreatedAt:                    now,
+		UpdatedAt:                    now,
+	}
+	if err := tx.Create(item).Error; err != nil {
+		return nil, err
+	}
+	if fulfillmentType == constants.FulfillmentTypeManual && shouldEnforceManualSKUStock(product, sku) {
+		skuRepo := repository.NewProductSKURepository(tx)
+		affected, err := skuRepo.ConsumeManualStock(sku.ID, 1)
+		if err != nil {
+			return nil, err
+		}
+		if affected == 0 {
+			return nil, ErrManualStockInsufficient
+		}
+	}
+	order.Items = []models.OrderItem{*item}
+	return order, nil
 }
 
 func generateGiftCardBatchNo(now time.Time) string {

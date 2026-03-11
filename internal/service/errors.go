@@ -132,6 +132,7 @@ var (
 	ErrGiftCardUpdateFailed            = errors.New("gift card update failed")
 	ErrGiftCardDeleteFailed            = errors.New("gift card delete failed")
 	ErrGiftCardBatchCreateFailed       = errors.New("gift card batch create failed")
+	ErrGiftCardRedeemTargetInvalid     = errors.New("gift card redeem target invalid")
 	ErrInvalidBanner                   = errors.New("invalid banner")
 	ErrQueueUnavailable                = errors.New("queue unavailable")
 	ErrDashboardRangeInvalid           = errors.New("dashboard range invalid")

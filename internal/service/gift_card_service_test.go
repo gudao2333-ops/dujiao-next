@@ -27,6 +27,12 @@ func setupGiftCardServiceTest(t *testing.T) (*GiftCardService, *WalletService, *
 		&models.Order{},
 		&models.OrderItem{},
 		&models.Fulfillment{},
+		&models.Category{},
+		&models.Product{},
+		&models.ProductSKU{},
+		&models.Coupon{},
+		&models.CouponUsage{},
+		&models.Promotion{},
 		&models.WalletAccount{},
 		&models.WalletTransaction{},
 		&models.Setting{},
@@ -41,8 +47,44 @@ func setupGiftCardServiceTest(t *testing.T) (*GiftCardService, *WalletService, *
 	settingRepo := repository.NewSettingRepository(db)
 	settingSvc := NewSettingService(settingRepo)
 	walletSvc := NewWalletService(repository.NewWalletRepository(db), repository.NewOrderRepository(db), userRepo, nil)
-	giftSvc := NewGiftCardService(repository.NewGiftCardRepository(db), userRepo, walletSvc, settingSvc)
+	orderSvc := NewOrderService(OrderServiceOptions{
+		OrderRepo:       repository.NewOrderRepository(db),
+		ProductRepo:     repository.NewProductRepository(db),
+		ProductSKURepo:  repository.NewProductSKURepository(db),
+		CouponRepo:      repository.NewCouponRepository(db),
+		CouponUsageRepo: repository.NewCouponUsageRepository(db),
+		PromotionRepo:   repository.NewPromotionRepository(db),
+		SettingService:  settingSvc,
+		ExpireMinutes:   30,
+	})
+	fulfillSvc := NewFulfillmentService(repository.NewOrderRepository(db), repository.NewFulfillmentRepository(db), repository.NewCardSecretRepository(db), nil, repository.NewUserOAuthIdentityRepository(db))
+	giftSvc := NewGiftCardService(repository.NewGiftCardRepository(db), userRepo, repository.NewProductRepository(db), repository.NewProductSKURepository(db), walletSvc, settingSvc, orderSvc, fulfillSvc)
 	return giftSvc, walletSvc, db
+}
+
+func seedRedeemProduct(t *testing.T, db *gorm.DB, productID uint, skuID uint, active bool) {
+	t.Helper()
+	now := time.Now()
+	category := models.Category{ID: 7001, NameJSON: models.JSON{"zh-CN": "分类"}, Slug: "cat-gift", CreatedAt: now}
+	_ = db.FirstOrCreate(&category, models.Category{ID: category.ID}).Error
+	product := models.Product{ID: productID, CategoryID: category.ID, Slug: fmt.Sprintf("gift-product-%d", productID), TitleJSON: models.JSON{"zh-CN": "商品"}, PriceAmount: models.NewMoneyFromDecimal(decimal.RequireFromString("9.90")), FulfillmentType: constants.FulfillmentTypeManual, ManualStockTotal: -1, IsActive: active, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+	if !active {
+		if err := db.Model(&models.Product{}).Where("id = ?", product.ID).Update("is_active", false).Error; err != nil {
+			t.Fatalf("disable product failed: %v", err)
+		}
+	}
+	sku := models.ProductSKU{ID: skuID, ProductID: product.ID, SKUCode: fmt.Sprintf("SKU-%d", skuID), PriceAmount: models.NewMoneyFromDecimal(decimal.RequireFromString("9.90")), ManualStockTotal: -1, IsActive: active, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+	if !active {
+		if err := db.Model(&models.ProductSKU{}).Where("id = ?", sku.ID).Update("is_active", false).Error; err != nil {
+			t.Fatalf("disable sku failed: %v", err)
+		}
+	}
 }
 
 func seedGiftCardUser(t *testing.T, db *gorm.DB, id uint) {
@@ -131,6 +173,19 @@ func TestGiftCardServiceGenerateGiftCardsUsesSiteCurrency(t *testing.T) {
 	}
 }
 
+func TestGiftCardServiceGenerateGiftCardsModeValidation(t *testing.T) {
+	svc, _, _ := setupGiftCardServiceTest(t)
+	if _, _, err := svc.GenerateGiftCards(GenerateGiftCardsInput{Name: "混合模式", Quantity: 1, Amount: models.NewMoneyFromDecimal(decimal.RequireFromString("1.00")), ProductID: 8001, SKUID: 8101}); !errors.Is(err, ErrGiftCardInvalid) {
+		t.Fatalf("expected mixed mode invalid, got: %v", err)
+	}
+	if _, _, err := svc.GenerateGiftCards(GenerateGiftCardsInput{Name: "缺 sku", Quantity: 1, ProductID: 8001}); !errors.Is(err, ErrGiftCardInvalid) {
+		t.Fatalf("expected product mode missing sku invalid, got: %v", err)
+	}
+	if _, _, err := svc.GenerateGiftCards(GenerateGiftCardsInput{Name: "缺 product", Quantity: 1, SKUID: 8101}); !errors.Is(err, ErrGiftCardInvalid) {
+		t.Fatalf("expected product mode missing product invalid, got: %v", err)
+	}
+}
+
 func TestGiftCardServiceRedeemGiftCard(t *testing.T) {
 	svc, walletSvc, db := setupGiftCardServiceTest(t)
 	userID := uint(2001)
@@ -150,13 +205,16 @@ func TestGiftCardServiceRedeemGiftCard(t *testing.T) {
 		t.Fatalf("query generated card failed: %v", err)
 	}
 
-	redeemedCard, account, txn, err := svc.RedeemGiftCard(GiftCardRedeemInput{
+	result, err := svc.RedeemGiftCard(GiftCardRedeemInput{
 		UserID: userID,
 		Code:   card.Code,
 	})
 	if err != nil {
 		t.Fatalf("redeem gift card failed: %v", err)
 	}
+	redeemedCard := result.Card
+	account := result.WalletAccount
+	txn := result.WalletTransaction
 	if redeemedCard == nil || redeemedCard.Status != models.GiftCardStatusRedeemed {
 		t.Fatalf("unexpected redeemed card: %+v", redeemedCard)
 	}
@@ -167,7 +225,7 @@ func TestGiftCardServiceRedeemGiftCard(t *testing.T) {
 		t.Fatalf("unexpected wallet transaction: %+v", txn)
 	}
 
-	_, _, _, err = svc.RedeemGiftCard(GiftCardRedeemInput{
+	_, err = svc.RedeemGiftCard(GiftCardRedeemInput{
 		UserID: userID,
 		Code:   card.Code,
 	})
@@ -204,12 +262,146 @@ func TestGiftCardServiceRedeemExpiredGiftCard(t *testing.T) {
 		t.Fatalf("create expired gift card failed: %v", err)
 	}
 
-	_, _, _, err := svc.RedeemGiftCard(GiftCardRedeemInput{
+	_, err := svc.RedeemGiftCard(GiftCardRedeemInput{
 		UserID: userID,
 		Code:   card.Code,
 	})
 	if !errors.Is(err, ErrGiftCardExpired) {
 		t.Fatalf("expected ErrGiftCardExpired, got: %v", err)
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductMode(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2010)
+	seedGiftCardUser(t, db, userID)
+	seedRedeemProduct(t, db, 8001, 8101, true)
+
+	batch, _, err := svc.GenerateGiftCards(GenerateGiftCardsInput{Name: "商品兑换码", Quantity: 1, ProductID: 8001, SKUID: 8101})
+	if err != nil {
+		t.Fatalf("generate product code failed: %v", err)
+	}
+	var card models.GiftCard
+	if err := db.Where("batch_id = ?", batch.ID).First(&card).Error; err != nil {
+		t.Fatalf("query generated card failed: %v", err)
+	}
+	result, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if err != nil {
+		t.Fatalf("redeem product code failed: %v", err)
+	}
+	if result.OrderID == 0 || result.OrderNo == "" || result.RedeemMode != models.GiftCardRedeemModeProduct {
+		t.Fatalf("unexpected redeem result: %+v", result)
+	}
+	if result.WalletAccount != nil || result.WalletTransaction != nil {
+		t.Fatalf("product redeem should not credit wallet")
+	}
+	var fulfillmentCount int64
+	if err := db.Model(&models.Fulfillment{}).Where("order_id = ?", result.OrderID).Count(&fulfillmentCount).Error; err != nil {
+		t.Fatalf("count fulfillment failed: %v", err)
+	}
+	if fulfillmentCount != 0 {
+		t.Fatalf("manual fulfillment product redeem should not auto create fulfillment")
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductModeInvalidSKU(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2011)
+	seedGiftCardUser(t, db, userID)
+	seedRedeemProduct(t, db, 8002, 8102, false)
+	card := models.GiftCard{Name: "无效商品兑换码", Code: "GC-PRODUCT-INVALID-001", Amount: models.NewMoneyFromDecimal(decimal.Zero), Currency: "CNY", Status: models.GiftCardStatusActive, ProductID: nullableUint(8002), SKUID: nullableUint(8102), RedeemMode: models.GiftCardRedeemModeProduct, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&card).Error; err != nil {
+		t.Fatalf("create card failed: %v", err)
+	}
+	_, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if !errors.Is(err, ErrGiftCardRedeemTargetInvalid) {
+		t.Fatalf("expected ErrGiftCardRedeemTargetInvalid, got: %v", err)
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductModeDuplicatePrevention(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2012)
+	seedGiftCardUser(t, db, userID)
+	seedRedeemProduct(t, db, 8010, 8110, true)
+	batch, _, err := svc.GenerateGiftCards(GenerateGiftCardsInput{Name: "商品兑换码重复", Quantity: 1, ProductID: 8010, SKUID: 8110})
+	if err != nil {
+		t.Fatalf("generate product code failed: %v", err)
+	}
+	var card models.GiftCard
+	if err := db.Where("batch_id = ?", batch.ID).First(&card).Error; err != nil {
+		t.Fatalf("query generated card failed: %v", err)
+	}
+	first, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if err != nil {
+		t.Fatalf("first redeem failed: %v", err)
+	}
+	if _, err = svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code}); !errors.Is(err, ErrGiftCardRedeemed) {
+		t.Fatalf("expected ErrGiftCardRedeemed, got: %v", err)
+	}
+	var orderCount int64
+	if err := db.Model(&models.Order{}).Where("id = ?", first.OrderID).Count(&orderCount).Error; err != nil {
+		t.Fatalf("count order failed: %v", err)
+	}
+	if orderCount != 1 {
+		t.Fatalf("expected only one redeem order, got: %d", orderCount)
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductModeExpired(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2013)
+	seedGiftCardUser(t, db, userID)
+	seedRedeemProduct(t, db, 8020, 8120, true)
+	expiredAt := time.Now().Add(-1 * time.Minute)
+	card := models.GiftCard{Name: "过期商品兑换码", Code: "GC-PRODUCT-EXPIRED-001", Amount: models.NewMoneyFromDecimal(decimal.Zero), Currency: "CNY", Status: models.GiftCardStatusActive, ProductID: nullableUint(8020), SKUID: nullableUint(8120), RedeemMode: models.GiftCardRedeemModeProduct, ExpiresAt: &expiredAt, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&card).Error; err != nil {
+		t.Fatalf("create card failed: %v", err)
+	}
+	_, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if !errors.Is(err, ErrGiftCardExpired) {
+		t.Fatalf("expected ErrGiftCardExpired, got: %v", err)
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductModeMismatch(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2014)
+	seedGiftCardUser(t, db, userID)
+	seedRedeemProduct(t, db, 8030, 8130, true)
+	seedRedeemProduct(t, db, 8040, 8140, true)
+	card := models.GiftCard{Name: "商品SKU不匹配兑换码", Code: "GC-PRODUCT-MISMATCH-001", Amount: models.NewMoneyFromDecimal(decimal.Zero), Currency: "CNY", Status: models.GiftCardStatusActive, ProductID: nullableUint(8030), SKUID: nullableUint(8140), RedeemMode: models.GiftCardRedeemModeProduct, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&card).Error; err != nil {
+		t.Fatalf("create card failed: %v", err)
+	}
+	_, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if !errors.Is(err, ErrGiftCardRedeemTargetInvalid) {
+		t.Fatalf("expected ErrGiftCardRedeemTargetInvalid, got: %v", err)
+	}
+}
+
+func TestGiftCardServiceRedeemGiftCardProductModeOutOfStock(t *testing.T) {
+	svc, _, db := setupGiftCardServiceTest(t)
+	userID := uint(2015)
+	seedGiftCardUser(t, db, userID)
+	now := time.Now()
+	category := models.Category{ID: 9001, NameJSON: models.JSON{"zh-CN": "分类"}, Slug: "cat-gift-stock", CreatedAt: now}
+	_ = db.FirstOrCreate(&category, models.Category{ID: category.ID}).Error
+	product := models.Product{ID: 8050, CategoryID: category.ID, Slug: "gift-product-stock-8050", TitleJSON: models.JSON{"zh-CN": "库存商品"}, PriceAmount: models.NewMoneyFromDecimal(decimal.RequireFromString("9.90")), FulfillmentType: constants.FulfillmentTypeManual, ManualStockTotal: 0, IsActive: true, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+	sku := models.ProductSKU{ID: 8150, ProductID: product.ID, SKUCode: "SKU-8150", PriceAmount: models.NewMoneyFromDecimal(decimal.RequireFromString("9.90")), ManualStockTotal: 0, IsActive: true, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+	card := models.GiftCard{Name: "缺货兑换码", Code: "GC-PRODUCT-STOCK-001", Amount: models.NewMoneyFromDecimal(decimal.Zero), Currency: "CNY", Status: models.GiftCardStatusActive, ProductID: nullableUint(8050), SKUID: nullableUint(8150), RedeemMode: models.GiftCardRedeemModeProduct, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&card).Error; err != nil {
+		t.Fatalf("create card failed: %v", err)
+	}
+	_, err := svc.RedeemGiftCard(GiftCardRedeemInput{UserID: userID, Code: card.Code})
+	if !errors.Is(err, ErrManualStockInsufficient) {
+		t.Fatalf("expected ErrManualStockInsufficient, got: %v", err)
 	}
 }
 

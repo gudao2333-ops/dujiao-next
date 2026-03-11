@@ -228,7 +228,7 @@ func (c *Container) initServices() {
 		c.UserOAuthIdentityRepo,
 	)
 	c.CardSecretService = service.NewCardSecretService(c.CardSecretRepo, c.CardSecretBatchRepo, c.ProductRepo, c.ProductSKURepo)
-	c.GiftCardService = service.NewGiftCardService(c.GiftCardRepo, c.UserRepo, c.WalletService, c.SettingService)
+	c.GiftCardService = service.NewGiftCardService(c.GiftCardRepo, c.UserRepo, c.ProductRepo, c.ProductSKURepo, c.WalletService, c.SettingService, c.OrderService, c.FulfillmentService)
 	c.CouponAdminService = service.NewCouponAdminService(c.CouponRepo)
 	c.PromotionAdminService = service.NewPromotionAdminService(c.PromotionRepo)
 	c.BannerService = service.NewBannerService(c.BannerRepo)

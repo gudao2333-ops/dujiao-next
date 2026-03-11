@@ -21,7 +21,9 @@ import (
 type GenerateGiftCardsRequest struct {
 	Name      string `json:"name" binding:"required"`
 	Quantity  int    `json:"quantity" binding:"required"`
-	Amount    string `json:"amount" binding:"required"`
+	Amount    string `json:"amount"`
+	ProductID uint   `json:"product_id"`
+	SKUID     uint   `json:"sku_id"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -67,10 +69,14 @@ func (h *Handler) GenerateGiftCards(c *gin.Context) {
 		shared.RespondBindError(c, err)
 		return
 	}
-	amount, err := decimal.NewFromString(strings.TrimSpace(req.Amount))
-	if err != nil {
-		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
-		return
+	amount := decimal.Zero
+	if strings.TrimSpace(req.Amount) != "" {
+		parsed, err := decimal.NewFromString(strings.TrimSpace(req.Amount))
+		if err != nil {
+			shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+			return
+		}
+		amount = parsed
 	}
 	expiresAt, err := shared.ParseTimeNullable(strings.TrimSpace(req.ExpiresAt))
 	if err != nil {
@@ -81,6 +87,8 @@ func (h *Handler) GenerateGiftCards(c *gin.Context) {
 		Name:      req.Name,
 		Quantity:  req.Quantity,
 		Amount:    models.NewMoneyFromDecimal(amount),
+		ProductID: req.ProductID,
+		SKUID:     req.SKUID,
 		ExpiresAt: expiresAt,
 		CreatedBy: &adminID,
 	})
