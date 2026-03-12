@@ -128,6 +128,13 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	}
 	data["affiliate"] = service.AffiliateSettingToMap(affiliateSetting)
 
+	siteOpenSetting, err := h.SettingService.GetSiteOpenSetting()
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.config_fetch_failed", err)
+		return
+	}
+	data["site_open"] = service.SiteOpenSettingToMap(siteOpenSetting)
+
 	_ = cache.SetJSON(c.Request.Context(), publicConfigCacheKey, data, publicConfigCacheTTL)
 	response.Success(c, data)
 }
@@ -609,6 +616,7 @@ func (h *Handler) CreateGuestOrder(c *gin.Context) {
 		AffiliateCode:       req.AffiliateCode,
 		AffiliateVisitorKey: req.AffiliateVisitorKey,
 		ClientIP:            c.ClientIP(),
+		RequestHost:         c.Request.Host,
 		ManualFormData:      req.ManualFormData,
 	})
 	if err != nil {
@@ -644,6 +652,7 @@ func (h *Handler) PreviewGuestOrder(c *gin.Context) {
 		AffiliateCode:       req.AffiliateCode,
 		AffiliateVisitorKey: req.AffiliateVisitorKey,
 		ClientIP:            c.ClientIP(),
+		RequestHost:         c.Request.Host,
 		ManualFormData:      req.ManualFormData,
 	})
 	if err != nil {

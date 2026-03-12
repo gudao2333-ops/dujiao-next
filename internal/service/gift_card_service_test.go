@@ -292,6 +292,13 @@ func TestGiftCardServiceRedeemGiftCardProductMode(t *testing.T) {
 	if result.OrderID == 0 || result.OrderNo == "" || result.RedeemMode != models.GiftCardRedeemModeProduct {
 		t.Fatalf("unexpected redeem result: %+v", result)
 	}
+	var item models.OrderItem
+	if err := db.Where("order_id = ?", result.OrderID).First(&item).Error; err != nil {
+		t.Fatalf("query redeem order item failed: %v", err)
+	}
+	if item.SiteProfitSnapshot.Decimal.StringFixed(2) != "0.00" || item.SitePriceSnapshot.Decimal.StringFixed(2) != "0.00" || item.BasePriceSnapshot.Decimal.StringFixed(2) != "0.00" {
+		t.Fatalf("redeem order should not carry site profit snapshots: base=%s site=%s profit=%s", item.BasePriceSnapshot.String(), item.SitePriceSnapshot.String(), item.SiteProfitSnapshot.String())
+	}
 	if result.WalletAccount != nil || result.WalletTransaction != nil {
 		t.Fatalf("product redeem should not credit wallet")
 	}

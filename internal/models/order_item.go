@@ -20,6 +20,9 @@ type OrderItem struct {
 	TotalPrice                   Money          `gorm:"type:decimal(20,2);not null;default:0" json:"total_price"`               // 小计
 	CouponDiscount               Money          `gorm:"type:decimal(20,2);not null;default:0" json:"coupon_discount_amount"`    // 优惠券分摊金额
 	PromotionDiscount            Money          `gorm:"type:decimal(20,2);not null;default:0" json:"promotion_discount_amount"` // 活动价分摊金额
+	BasePriceSnapshot            Money          `gorm:"type:decimal(20,2);not null;default:0" json:"base_price_snapshot"`       // 基准单价快照
+	SitePriceSnapshot            Money          `gorm:"type:decimal(20,2);not null;default:0" json:"site_price_snapshot"`       // 子站单价快照
+	SiteProfitSnapshot           Money          `gorm:"type:decimal(20,2);not null;default:0" json:"site_profit_snapshot"`      // 子站单件利润快照
 	PromotionID                  *uint          `gorm:"index" json:"promotion_id,omitempty"`                                    // 活动价ID
 	PromotionName                string         `gorm:"-" json:"promotion_name,omitempty"`                                      // 活动价名称
 	FulfillmentType              string         `gorm:"not null" json:"fulfillment_type"`                                       // 交付类型

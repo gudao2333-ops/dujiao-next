@@ -33,6 +33,8 @@ type PaymentService struct {
 	settingService        *SettingService
 	expireMinutes         int
 	affiliateSvc          *AffiliateService
+	siteSvc               *SiteService
+	siteProfitSvc         *SiteProfitService
 	notificationSvc       *NotificationService
 	procurementSvc        *ProcurementOrderService
 	downstreamCallbackSvc *DownstreamCallbackService
@@ -62,6 +64,8 @@ type PaymentServiceOptions struct {
 	SettingService        *SettingService
 	ExpireMinutes         int
 	AffiliateService      *AffiliateService
+	SiteService           *SiteService
+	SiteProfitService     *SiteProfitService
 	NotificationService   *NotificationService
 }
 
@@ -80,6 +84,8 @@ func NewPaymentService(opts PaymentServiceOptions) *PaymentService {
 		settingService:        opts.SettingService,
 		expireMinutes:         opts.ExpireMinutes,
 		affiliateSvc:          opts.AffiliateService,
+		siteSvc:               opts.SiteService,
+		siteProfitSvc:         opts.SiteProfitService,
 		notificationSvc:       opts.NotificationService,
 	}
 }
