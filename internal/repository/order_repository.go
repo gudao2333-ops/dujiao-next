@@ -22,9 +22,31 @@ type OrderRepository interface {
 	ListByUser(filter OrderListFilter) ([]models.Order, int64, error)
 	ListByGuest(email, password string, page, pageSize int) ([]models.Order, int64, error)
 	ListAdmin(filter OrderListFilter) ([]models.Order, int64, error)
+	ListBySite(siteID uint, page, pageSize int, status string) ([]models.Order, int64, error)
 	UpdateStatus(id uint, status string, updates map[string]interface{}) error
 	Transaction(fn func(tx *gorm.DB) error) error
 	WithTx(tx *gorm.DB) *GormOrderRepository
+}
+
+// ListBySite 子站维度订单摘要列表（仅父订单）
+func (r *GormOrderRepository) ListBySite(siteID uint, page, pageSize int, status string) ([]models.Order, int64, error) {
+	rows := make([]models.Order, 0)
+	if siteID == 0 {
+		return rows, 0, nil
+	}
+	q := r.db.Model(&models.Order{}).Where("site_id = ? AND parent_id IS NULL", siteID)
+	if strings.TrimSpace(status) != "" {
+		q = q.Where("status = ?", strings.TrimSpace(status))
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	q = applyPagination(q, page, pageSize)
+	if err := q.Preload("Items").Order("id desc").Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // GormOrderRepository GORM 实现

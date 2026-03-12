@@ -11,6 +11,13 @@ const (
 	OrderStatusCanceled           = "canceled"
 )
 
+// 订单场景常量
+const (
+	OrderSceneProduct     = "product"
+	OrderSceneSiteOpening = "site_opening"
+	OrderSceneRedeem      = "redeem"
+)
+
 // 交付类型与状态常量
 const (
 	FulfillmentTypeAuto        = "auto"
@@ -116,6 +123,27 @@ const (
 const (
 	AffiliateWithdrawActionReject = "reject"
 	AffiliateWithdrawActionPay    = "pay"
+)
+
+// 子站利润状态
+const (
+	SiteProfitStatusPendingConfirm = "pending_confirm"
+	SiteProfitStatusAvailable      = "available"
+	SiteProfitStatusWithdrawn      = "withdrawn"
+	SiteProfitStatusReversed       = "reversed"
+)
+
+// 子站提现状态
+const (
+	SiteWithdrawStatusPendingReview = "pending_review"
+	SiteWithdrawStatusRejected      = "rejected"
+	SiteWithdrawStatusPaid          = "paid"
+)
+
+// 子站提现审核动作
+const (
+	SiteWithdrawActionReject = "reject"
+	SiteWithdrawActionPay    = "pay"
 )
 
 // 易支付回调常量
@@ -373,6 +401,7 @@ const (
 	SettingKeyDashboardConfig          = "dashboard_config"
 	SettingKeyNotificationCenterConfig = "notification_center_config"
 	SettingKeyAffiliateConfig          = "affiliate_config"
+	SettingKeySiteOpenConfig           = "site_open_config"
 	SettingKeyTelegramBotConfig        = "telegram_bot_config"
 	SettingKeyTelegramBotRuntimeStatus = "telegram_bot_runtime_status"
 	SettingFieldSiteCurrency           = "currency"

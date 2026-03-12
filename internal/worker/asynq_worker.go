@@ -284,6 +284,12 @@ func (c *Consumer) handleAffiliateConfirmCommissions(_ context.Context, _ *asynq
 		logger.Warnw("worker_affiliate_confirm_due_failed", "error", err)
 		return err
 	}
+	if c.SiteProfitService != nil {
+		if err := c.SiteProfitService.ConfirmDueProfits(time.Now()); err != nil {
+			logger.Warnw("worker_site_profit_confirm_due_failed", "error", err)
+			return err
+		}
+	}
 	return nil
 }
 

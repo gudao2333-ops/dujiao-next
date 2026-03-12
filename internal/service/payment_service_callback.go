@@ -478,6 +478,24 @@ func (s *PaymentService) enqueueOrderPaidAsync(order *models.Order, payment *mod
 			)
 		}
 	}
+	if s.siteSvc != nil {
+		if err := s.siteSvc.HandleOrderPaid(order.ID); err != nil {
+			log.Warnw("site_handle_order_paid_failed",
+				"order_id", order.ID,
+				"order_no", order.OrderNo,
+				"error", err,
+			)
+		}
+	}
+	if s.siteProfitSvc != nil {
+		if err := s.siteProfitSvc.HandleOrderPaid(order.ID); err != nil {
+			log.Warnw("site_profit_handle_order_paid_failed",
+				"order_id", order.ID,
+				"order_no", order.OrderNo,
+				"error", err,
+			)
+		}
+	}
 	if s.queueClient != nil {
 		if _, err := enqueueOrderStatusEmailTaskIfEligible(s.orderRepo, s.queueClient, order.ID, constants.OrderStatusPaid); err != nil {
 			log.Warnw("payment_enqueue_status_email_failed",

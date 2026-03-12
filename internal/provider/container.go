@@ -45,6 +45,12 @@ type Container struct {
 	AffiliateRepo          repository.AffiliateRepository
 	ApiCredentialRepo      repository.ApiCredentialRepository
 	SiteConnectionRepo     repository.SiteConnectionRepository
+	SiteRepo               repository.SiteRepository
+	SiteDomainSuffixRepo   repository.SiteDomainSuffixRepository
+	SiteProductPriceRepo   repository.SiteProductPriceRepository
+	SiteProfitAccountRepo  repository.SiteProfitAccountRepository
+	SiteProfitLedgerRepo   repository.SiteProfitLedgerRepository
+	SiteWithdrawRepo       repository.SiteWithdrawRepository
 	ProductMappingRepo     repository.ProductMappingRepository
 	SKUMappingRepo         repository.SKUMappingRepository
 	ProcurementOrderRepo   repository.ProcurementOrderRepository
@@ -83,6 +89,8 @@ type Container struct {
 	AffiliateService          *service.AffiliateService
 	ApiCredentialService      *service.ApiCredentialService
 	SiteConnectionService     *service.SiteConnectionService
+	SiteService               *service.SiteService
+	SiteProfitService         *service.SiteProfitService
 	ProductMappingService     *service.ProductMappingService
 	ProcurementOrderService   *service.ProcurementOrderService
 	DownstreamCallbackService *service.DownstreamCallbackService
@@ -153,6 +161,12 @@ func (c *Container) initRepositories() {
 	c.AffiliateRepo = repository.NewAffiliateRepository(db)
 	c.ApiCredentialRepo = repository.NewApiCredentialRepository(db)
 	c.SiteConnectionRepo = repository.NewSiteConnectionRepository(db)
+	c.SiteRepo = repository.NewSiteRepository(db)
+	c.SiteDomainSuffixRepo = repository.NewSiteDomainSuffixRepository(db)
+	c.SiteProductPriceRepo = repository.NewSiteProductPriceRepository(db)
+	c.SiteProfitAccountRepo = repository.NewSiteProfitAccountRepository(db)
+	c.SiteProfitLedgerRepo = repository.NewSiteProfitLedgerRepository(db)
+	c.SiteWithdrawRepo = repository.NewSiteWithdrawRepository(db)
 	c.ProductMappingRepo = repository.NewProductMappingRepository(db)
 	c.SKUMappingRepo = repository.NewSKUMappingRepository(db)
 	c.ProcurementOrderRepo = repository.NewProcurementOrderRepository(db)
@@ -204,24 +218,28 @@ func (c *Container) initServices() {
 	c.UserAuthService = service.NewUserAuthService(c.Config, c.UserRepo, c.UserOAuthIdentityRepo, c.EmailVerifyCodeRepo, c.EmailService, c.TelegramAuthService)
 	c.UploadService = service.NewUploadService(c.Config)
 	c.AffiliateService = service.NewAffiliateService(c.AffiliateRepo, c.UserRepo, c.OrderRepo, c.ProductRepo, c.SettingService)
+	c.SiteService = service.NewSiteService(c.SiteRepo, c.SiteDomainSuffixRepo, c.SiteProductPriceRepo, c.OrderRepo, c.ProductRepo, c.ProductSKURepo, c.SettingService)
+	c.SiteProfitService = service.NewSiteProfitService(c.SiteRepo, c.OrderRepo, c.SiteProfitAccountRepo, c.SiteProfitLedgerRepo, c.SiteWithdrawRepo, c.SettingService)
 	c.ProductService = service.NewProductService(c.ProductRepo, c.ProductSKURepo, c.CardSecretRepo)
 	c.PostService = service.NewPostService(c.PostRepo)
 	c.CategoryService = service.NewCategoryService(c.CategoryRepo)
 	c.CartService = service.NewCartService(c.CartRepo, c.ProductRepo, c.ProductSKURepo, c.PromotionRepo, c.SettingService)
-	c.WalletService = service.NewWalletService(c.WalletRepo, c.OrderRepo, c.UserRepo, c.AffiliateService)
+	c.WalletService = service.NewWalletService(c.WalletRepo, c.OrderRepo, c.UserRepo, c.AffiliateService, c.SiteProfitService)
 	c.OrderService = service.NewOrderService(service.OrderServiceOptions{
-		OrderRepo:        c.OrderRepo,
-		ProductRepo:      c.ProductRepo,
-		ProductSKURepo:   c.ProductSKURepo,
-		CardSecretRepo:   c.CardSecretRepo,
-		CouponRepo:       c.CouponRepo,
-		CouponUsageRepo:  c.CouponUsageRepo,
-		PromotionRepo:    c.PromotionRepo,
-		QueueClient:      c.QueueClient,
-		SettingService:   c.SettingService,
-		WalletService:    c.WalletService,
-		AffiliateService: c.AffiliateService,
-		ExpireMinutes:    c.Config.Order.PaymentExpireMinutes,
+		OrderRepo:         c.OrderRepo,
+		ProductRepo:       c.ProductRepo,
+		ProductSKURepo:    c.ProductSKURepo,
+		CardSecretRepo:    c.CardSecretRepo,
+		CouponRepo:        c.CouponRepo,
+		CouponUsageRepo:   c.CouponUsageRepo,
+		PromotionRepo:     c.PromotionRepo,
+		QueueClient:       c.QueueClient,
+		SettingService:    c.SettingService,
+		WalletService:     c.WalletService,
+		AffiliateService:  c.AffiliateService,
+		SiteService:       c.SiteService,
+		SiteProfitService: c.SiteProfitService,
+		ExpireMinutes:     c.Config.Order.PaymentExpireMinutes,
 	})
 	c.FulfillmentService = service.NewFulfillmentService(
 		c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.QueueClient,
@@ -253,6 +271,8 @@ func (c *Container) initServices() {
 		SettingService:        c.SettingService,
 		ExpireMinutes:         c.Config.Order.PaymentExpireMinutes,
 		AffiliateService:      c.AffiliateService,
+		SiteService:           c.SiteService,
+		SiteProfitService:     c.SiteProfitService,
 		NotificationService:   c.NotificationService,
 	})
 	c.ProcurementOrderService = service.NewProcurementOrderService(

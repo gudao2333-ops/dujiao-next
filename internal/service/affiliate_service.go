@@ -335,6 +335,13 @@ func (s *AffiliateService) HandleOrderPaid(orderID uint) error {
 	if order == nil {
 		return nil
 	}
+	scene := strings.TrimSpace(order.OrderScene)
+	if scene == constants.OrderSceneProduct && order.SiteID != nil && *order.SiteID > 0 {
+		return nil
+	}
+	if scene == constants.OrderSceneRedeem {
+		return nil
+	}
 	profile, err := s.resolveAffiliateProfileForOrder(order)
 	if err != nil {
 		return err

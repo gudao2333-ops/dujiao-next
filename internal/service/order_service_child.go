@@ -133,6 +133,11 @@ func (s *OrderService) CancelOrder(orderID uint, userID uint) (*models.Order, er
 			)
 		}
 	}
+	if s.siteProfitSvc != nil {
+		if err := s.siteProfitSvc.HandleOrderCanceled(order.ID, "order_canceled_by_user"); err != nil {
+			logger.Warnw("site_profit_handle_order_canceled_failed", "order_id", order.ID, "error", err)
+		}
+	}
 	if s.queueClient != nil {
 		if _, err := enqueueOrderStatusEmailTaskIfEligible(s.orderRepo, s.queueClient, order.ID, constants.OrderStatusCanceled); err != nil {
 			logger.Warnw("order_enqueue_status_email_failed",
@@ -177,6 +182,11 @@ func (s *OrderService) UpdateOrderStatus(orderID uint, targetStatus string) (*mo
 						"order_id", order.ID,
 						"error", err,
 					)
+				}
+			}
+			if s.siteProfitSvc != nil {
+				if err := s.siteProfitSvc.HandleOrderCanceled(order.ID, "order_canceled_by_admin"); err != nil {
+					logger.Warnw("site_profit_handle_order_canceled_failed", "order_id", order.ID, "error", err)
 				}
 			}
 			if s.queueClient != nil {
@@ -233,6 +243,11 @@ func (s *OrderService) UpdateOrderStatus(orderID uint, targetStatus string) (*mo
 						"order_id", order.ID,
 						"error", err,
 					)
+				}
+			}
+			if s.siteProfitSvc != nil {
+				if err := s.siteProfitSvc.HandleOrderPaid(order.ID); err != nil {
+					logger.Warnw("site_profit_handle_order_paid_failed", "order_id", order.ID, "error", err)
 				}
 			}
 			return order, nil
@@ -310,12 +325,22 @@ func (s *OrderService) UpdateOrderStatus(orderID uint, targetStatus string) (*mo
 			)
 		}
 	}
+	if target == constants.OrderStatusPaid && s.siteProfitSvc != nil {
+		if err := s.siteProfitSvc.HandleOrderPaid(order.ID); err != nil {
+			logger.Warnw("site_profit_handle_order_paid_failed", "order_id", order.ID, "error", err)
+		}
+	}
 	if target == constants.OrderStatusCanceled && s.affiliateSvc != nil {
 		if err := s.affiliateSvc.HandleOrderCanceled(order.ID, "order_canceled_by_admin"); err != nil {
 			logger.Warnw("affiliate_handle_order_canceled_failed",
 				"order_id", order.ID,
 				"error", err,
 			)
+		}
+	}
+	if target == constants.OrderStatusCanceled && s.siteProfitSvc != nil {
+		if err := s.siteProfitSvc.HandleOrderCanceled(order.ID, "order_canceled_by_admin"); err != nil {
+			logger.Warnw("site_profit_handle_order_canceled_failed", "order_id", order.ID, "error", err)
 		}
 	}
 	order.Status = target
@@ -471,6 +496,11 @@ func (s *OrderService) CancelExpiredOrder(orderID uint) (*models.Order, error) {
 				"order_id", order.ID,
 				"error", err,
 			)
+		}
+	}
+	if s.siteProfitSvc != nil {
+		if err := s.siteProfitSvc.HandleOrderCanceled(order.ID, "order_expired_canceled"); err != nil {
+			logger.Warnw("site_profit_handle_order_canceled_failed", "order_id", order.ID, "error", err)
 		}
 	}
 	if s.queueClient != nil {
