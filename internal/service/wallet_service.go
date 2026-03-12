@@ -20,10 +20,11 @@ const (
 
 // WalletService 钱包服务
 type WalletService struct {
-	walletRepo   repository.WalletRepository
-	orderRepo    repository.OrderRepository
-	userRepo     repository.UserRepository
-	affiliateSvc *AffiliateService
+	walletRepo    repository.WalletRepository
+	orderRepo     repository.OrderRepository
+	userRepo      repository.UserRepository
+	affiliateSvc  *AffiliateService
+	siteProfitSvc *SiteProfitService
 }
 
 // WalletRechargeInput 用户充值输入
@@ -66,12 +67,18 @@ func NewWalletService(
 	orderRepo repository.OrderRepository,
 	userRepo repository.UserRepository,
 	affiliateSvc *AffiliateService,
+	siteProfitSvc ...*SiteProfitService,
 ) *WalletService {
+	var profitSvc *SiteProfitService
+	if len(siteProfitSvc) > 0 {
+		profitSvc = siteProfitSvc[0]
+	}
 	return &WalletService{
-		walletRepo:   walletRepo,
-		orderRepo:    orderRepo,
-		userRepo:     userRepo,
-		affiliateSvc: affiliateSvc,
+		walletRepo:    walletRepo,
+		orderRepo:     orderRepo,
+		userRepo:      userRepo,
+		affiliateSvc:  affiliateSvc,
+		siteProfitSvc: profitSvc,
 	}
 }
 
@@ -234,6 +241,11 @@ func (s *WalletService) AdminRefundToWallet(input AdminRefundToWalletInput) (*mo
 				refundedBefore,
 				"order_refunded_to_wallet",
 			); err != nil {
+				return err
+			}
+		}
+		if s.siteProfitSvc != nil {
+			if err := s.siteProfitSvc.HandleOrderRefundedTx(tx, &order, amount, refundedBefore, "order_refunded_to_wallet"); err != nil {
 				return err
 			}
 		}

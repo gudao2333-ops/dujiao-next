@@ -61,6 +61,7 @@ func (h *Handler) PreviewOrder(c *gin.Context) {
 		AffiliateCode:       req.AffiliateCode,
 		AffiliateVisitorKey: req.AffiliateVisitorKey,
 		ClientIP:            c.ClientIP(),
+		RequestHost:         c.Request.Host,
 		ManualFormData:      req.ManualFormData,
 	})
 	if err != nil {
@@ -101,6 +102,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		AffiliateCode:       req.AffiliateCode,
 		AffiliateVisitorKey: req.AffiliateVisitorKey,
 		ClientIP:            c.ClientIP(),
+		RequestHost:         c.Request.Host,
 		ManualFormData:      req.ManualFormData,
 	})
 	if err != nil {

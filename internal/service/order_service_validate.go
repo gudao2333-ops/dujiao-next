@@ -34,6 +34,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 
 	var plans []childOrderPlan
 	var orderItems []models.OrderItem
+	attributedSiteID := input.SiteID
 	originalAmount := decimal.Zero
 	promotionDiscountAmount := decimal.Zero
 	currency := s.resolveSiteCurrency()
@@ -44,6 +45,15 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 	var noPromotionSeen bool
 
 	promotionService := NewPromotionService(s.promotionRepo)
+	if normalizeOrderScene(input.OrderScene) == constants.OrderSceneProduct && attributedSiteID == nil && s.siteSvc != nil {
+		attr, attrErr := s.siteSvc.ResolveSiteByHost(input.RequestHost)
+		if attrErr != nil {
+			return nil, attrErr
+		}
+		if attr != nil {
+			attributedSiteID = attr.SiteID
+		}
+	}
 	manualFormData := input.ManualFormData
 	if manualFormData == nil {
 		manualFormData = map[string]models.JSON{}
@@ -75,8 +85,17 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		}
 
 		productCurrency := currency
+		basePrice := sku.PriceAmount.Decimal.Round(2)
+		sitePrice := basePrice
+		if normalizeOrderScene(input.OrderScene) == constants.OrderSceneProduct && attributedSiteID != nil && s.siteSvc != nil {
+			resolvedSitePrice, resolveErr := s.siteSvc.ResolveSiteSKUPrice(*attributedSiteID, product.ID, sku.ID, sku.PriceAmount)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			sitePrice = resolvedSitePrice.Decimal.Round(2)
+		}
 		priceCarrier := *product
-		priceCarrier.PriceAmount = sku.PriceAmount
+		priceCarrier.PriceAmount = models.NewMoneyFromDecimal(sitePrice)
 		promotion, unitPrice, err := promotionService.ApplyPromotion(&priceCarrier, item.Quantity)
 		if err != nil {
 			return nil, err
@@ -86,18 +105,21 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 			return nil, ErrProductPriceInvalid
 		}
 
-		basePrice := sku.PriceAmount.Decimal.Round(2)
 		promotionDiscount := decimal.Zero
-		if promotion != nil && basePrice.GreaterThan(unitPriceAmount) {
-			promotionDiscount = basePrice.Sub(unitPriceAmount).
+		if promotion != nil && sitePrice.GreaterThan(unitPriceAmount) {
+			promotionDiscount = sitePrice.Sub(unitPriceAmount).
 				Mul(decimal.NewFromInt(int64(item.Quantity))).
 				Round(2)
 			promotionDiscountAmount = promotionDiscountAmount.Add(promotionDiscount).Round(2)
 		}
 
-		baseTotal := basePrice.Mul(decimal.NewFromInt(int64(item.Quantity))).Round(2)
+		baseTotal := sitePrice.Mul(decimal.NewFromInt(int64(item.Quantity))).Round(2)
 		total := unitPriceAmount.Mul(decimal.NewFromInt(int64(item.Quantity))).Round(2)
 		originalAmount = originalAmount.Add(baseTotal).Round(2)
+		siteProfit := decimal.Zero
+		if normalizeOrderScene(input.OrderScene) == constants.OrderSceneProduct && attributedSiteID != nil && sitePrice.GreaterThan(basePrice) {
+			siteProfit = sitePrice.Sub(basePrice).Round(2)
+		}
 		fulfillmentType := strings.TrimSpace(product.FulfillmentType)
 		if fulfillmentType == "" {
 			fulfillmentType = constants.FulfillmentTypeManual
@@ -154,6 +176,9 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 			TotalPrice:                   models.NewMoneyFromDecimal(total),
 			CouponDiscount:               models.NewMoneyFromDecimal(decimal.Zero),
 			PromotionDiscount:            models.NewMoneyFromDecimal(promotionDiscount),
+			BasePriceSnapshot:            models.NewMoneyFromDecimal(basePrice),
+			SitePriceSnapshot:            models.NewMoneyFromDecimal(sitePrice),
+			SiteProfitSnapshot:           models.NewMoneyFromDecimal(siteProfit),
 			PromotionID:                  promotionID,
 			FulfillmentType:              fulfillmentType,
 			ManualFormSchemaSnapshotJSON: manualSchemaSnapshot,
@@ -222,6 +247,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 	return &orderBuildResult{
 		Plans:                   plans,
 		OrderItems:              orderItems,
+		AttributedSiteID:        attributedSiteID,
 		OriginalAmount:          originalAmount,
 		PromotionDiscountAmount: promotionDiscountAmount,
 		DiscountAmount:          discountAmount,
@@ -252,6 +278,16 @@ func normalizeAffiliateCode(raw string) string {
 		return code[:32]
 	}
 	return code
+}
+
+func normalizeOrderScene(raw string) string {
+	scene := strings.TrimSpace(raw)
+	switch scene {
+	case constants.OrderSceneSiteOpening, constants.OrderSceneRedeem:
+		return scene
+	default:
+		return constants.OrderSceneProduct
+	}
 }
 
 func (s *OrderService) resolveExpireMinutes() int {

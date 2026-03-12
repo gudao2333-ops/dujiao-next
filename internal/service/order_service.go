@@ -28,23 +28,27 @@ type OrderService struct {
 	settingService  *SettingService
 	walletService   *WalletService
 	affiliateSvc    *AffiliateService
+	siteSvc         *SiteService
+	siteProfitSvc   *SiteProfitService
 	expireMinutes   int
 }
 
 // OrderServiceOptions 订单服务构造参数
 type OrderServiceOptions struct {
-	OrderRepo        repository.OrderRepository
-	ProductRepo      repository.ProductRepository
-	ProductSKURepo   repository.ProductSKURepository
-	CardSecretRepo   repository.CardSecretRepository
-	CouponRepo       repository.CouponRepository
-	CouponUsageRepo  repository.CouponUsageRepository
-	PromotionRepo    repository.PromotionRepository
-	QueueClient      *queue.Client
-	SettingService   *SettingService
-	WalletService    *WalletService
-	AffiliateService *AffiliateService
-	ExpireMinutes    int
+	OrderRepo         repository.OrderRepository
+	ProductRepo       repository.ProductRepository
+	ProductSKURepo    repository.ProductSKURepository
+	CardSecretRepo    repository.CardSecretRepository
+	CouponRepo        repository.CouponRepository
+	CouponUsageRepo   repository.CouponUsageRepository
+	PromotionRepo     repository.PromotionRepository
+	QueueClient       *queue.Client
+	SettingService    *SettingService
+	WalletService     *WalletService
+	AffiliateService  *AffiliateService
+	SiteService       *SiteService
+	SiteProfitService *SiteProfitService
+	ExpireMinutes     int
 }
 
 // NewOrderService 创建订单服务
@@ -61,6 +65,8 @@ func NewOrderService(opts OrderServiceOptions) *OrderService {
 		settingService:  opts.SettingService,
 		walletService:   opts.WalletService,
 		affiliateSvc:    opts.AffiliateService,
+		siteSvc:         opts.SiteService,
+		siteProfitSvc:   opts.SiteProfitService,
 		expireMinutes:   opts.ExpireMinutes,
 	}
 }
@@ -97,11 +103,14 @@ func (s *OrderService) withTx(tx *gorm.DB) *OrderService {
 // CreateOrderInput 创建订单输入
 type CreateOrderInput struct {
 	UserID              uint
+	OrderScene          string
+	SiteID              *uint
 	Items               []CreateOrderItem
 	CouponCode          string
 	AffiliateCode       string
 	AffiliateVisitorKey string
 	ClientIP            string
+	RequestHost         string
 	ManualFormData      map[string]models.JSON
 }
 
@@ -115,7 +124,10 @@ type CreateGuestOrderInput struct {
 	AffiliateCode       string
 	AffiliateVisitorKey string
 	ClientIP            string
+	RequestHost         string
 	ManualFormData      map[string]models.JSON
+	OrderScene          string
+	SiteID              *uint
 }
 
 // CreateOrderItem 创建订单项输入
@@ -167,11 +179,14 @@ func (s *OrderService) CreateOrder(input CreateOrderInput) (*models.Order, error
 	}
 	return s.createOrder(orderCreateParams{
 		UserID:              input.UserID,
+		OrderScene:          input.OrderScene,
+		SiteID:              input.SiteID,
 		Items:               input.Items,
 		CouponCode:          input.CouponCode,
 		AffiliateCode:       input.AffiliateCode,
 		AffiliateVisitorKey: input.AffiliateVisitorKey,
 		ClientIP:            input.ClientIP,
+		RequestHost:         input.RequestHost,
 		ManualFormData:      input.ManualFormData,
 	})
 }
@@ -189,6 +204,8 @@ func (s *OrderService) CreateGuestOrder(input CreateGuestOrderInput) (*models.Or
 	locale := strings.TrimSpace(input.Locale)
 	return s.createOrder(orderCreateParams{
 		UserID:              0,
+		OrderScene:          input.OrderScene,
+		SiteID:              input.SiteID,
 		GuestEmail:          email,
 		GuestPassword:       password,
 		GuestLocale:         locale,
@@ -197,6 +214,7 @@ func (s *OrderService) CreateGuestOrder(input CreateGuestOrderInput) (*models.Or
 		AffiliateCode:       input.AffiliateCode,
 		AffiliateVisitorKey: input.AffiliateVisitorKey,
 		ClientIP:            input.ClientIP,
+		RequestHost:         input.RequestHost,
 		IsGuest:             true,
 		ManualFormData:      input.ManualFormData,
 	})
@@ -204,6 +222,8 @@ func (s *OrderService) CreateGuestOrder(input CreateGuestOrderInput) (*models.Or
 
 type orderCreateParams struct {
 	UserID              uint
+	OrderScene          string
+	SiteID              *uint
 	GuestEmail          string
 	GuestPassword       string
 	GuestLocale         string
@@ -212,6 +232,7 @@ type orderCreateParams struct {
 	AffiliateCode       string
 	AffiliateVisitorKey string
 	ClientIP            string
+	RequestHost         string
 	IsGuest             bool
 	ManualFormData      map[string]models.JSON
 }
@@ -244,6 +265,7 @@ type OrderPreviewItem struct {
 type orderBuildResult struct {
 	Plans                   []childOrderPlan
 	OrderItems              []models.OrderItem
+	AttributedSiteID        *uint
 	OriginalAmount          decimal.Decimal
 	PromotionDiscountAmount decimal.Decimal
 	DiscountAmount          decimal.Decimal
@@ -260,11 +282,14 @@ func (s *OrderService) PreviewOrder(input CreateOrderInput) (*OrderPreview, erro
 	}
 	return s.previewOrder(orderCreateParams{
 		UserID:              input.UserID,
+		OrderScene:          input.OrderScene,
+		SiteID:              input.SiteID,
 		Items:               input.Items,
 		CouponCode:          input.CouponCode,
 		AffiliateCode:       input.AffiliateCode,
 		AffiliateVisitorKey: input.AffiliateVisitorKey,
 		ClientIP:            input.ClientIP,
+		RequestHost:         input.RequestHost,
 		ManualFormData:      input.ManualFormData,
 	})
 }
@@ -273,6 +298,8 @@ func (s *OrderService) PreviewOrder(input CreateOrderInput) (*OrderPreview, erro
 func (s *OrderService) PreviewGuestOrder(input CreateGuestOrderInput) (*OrderPreview, error) {
 	return s.previewOrder(orderCreateParams{
 		GuestEmail:          input.Email,
+		OrderScene:          input.OrderScene,
+		SiteID:              input.SiteID,
 		GuestPassword:       input.OrderPassword,
 		GuestLocale:         input.Locale,
 		Items:               input.Items,
@@ -280,6 +307,7 @@ func (s *OrderService) PreviewGuestOrder(input CreateGuestOrderInput) (*OrderPre
 		AffiliateCode:       input.AffiliateCode,
 		AffiliateVisitorKey: input.AffiliateVisitorKey,
 		ClientIP:            input.ClientIP,
+		RequestHost:         input.RequestHost,
 		IsGuest:             true,
 		ManualFormData:      input.ManualFormData,
 	})
@@ -336,6 +364,10 @@ func (s *OrderService) createOrder(input orderCreateParams) (*models.Order, erro
 		affiliateProfileID = resolvedID
 		affiliateCode = resolvedCode
 	}
+	if normalizeOrderScene(input.OrderScene) == constants.OrderSceneProduct && result.AttributedSiteID != nil {
+		affiliateProfileID = nil
+		affiliateCode = ""
+	}
 
 	if len(input.Items) == 0 {
 		return nil, ErrInvalidOrderItem
@@ -370,6 +402,8 @@ func (s *OrderService) createOrder(input orderCreateParams) (*models.Order, erro
 		RefundedAmount:          models.NewMoneyFromDecimal(decimal.Zero),
 		CouponID:                nil,
 		PromotionID:             result.OrderPromotionID,
+		SiteID:                  result.AttributedSiteID,
+		OrderScene:              normalizeOrderScene(input.OrderScene),
 		AffiliateProfileID:      affiliateProfileID,
 		AffiliateCode:           affiliateCode,
 		ExpiresAt:               &expiresAt,
@@ -412,6 +446,8 @@ func (s *OrderService) createOrder(input orderCreateParams) (*models.Order, erro
 				RefundedAmount:          models.NewMoneyFromDecimal(decimal.Zero),
 				CouponID:                nil,
 				PromotionID:             plan.Item.PromotionID,
+				SiteID:                  result.AttributedSiteID,
+				OrderScene:              normalizeOrderScene(input.OrderScene),
 				AffiliateProfileID:      affiliateProfileID,
 				AffiliateCode:           affiliateCode,
 				ExpiresAt:               &expiresAt,
